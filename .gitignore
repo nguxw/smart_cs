@@ -1,0 +1,46 @@
+# Local environments and dependency caches
+.venv/
+.conda/
+.conda_pkgs/
+.tmp/
+.pip_cache/
+.npm_cache/
+node_modules/
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+.idea/
+.vscode/
+
+# Python/tooling caches
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+*.egg-info/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build outputs and runtime data
+dist/
+build/
+.vite/
+frontend/dist/
+data/runtime/
+backend/vector_store/
+logs/
+*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

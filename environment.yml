@@ -1,0 +1,9 @@
+name: smartcs-agent-desk
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - nodejs
+  - pip:
+      - -e ./backend[dev]
