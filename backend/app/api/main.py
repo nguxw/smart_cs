@@ -118,7 +118,13 @@ def build_harness_manifest() -> dict[str, Any]:
         ],
         "event_contract": {
             "stream": ["agent_step", "tool_call", "citation", "token", "final", "error"],
-            "trace_required_fields": ["trace_id", "agent_path", "tool_calls", "retrieved_docs", "latency_ms"],
+            "trace_required_fields": [
+                "trace_id",
+                "agent_path",
+                "tool_calls",
+                "retrieved_docs",
+                "latency_ms",
+            ],
         },
         "planes": [
             {
@@ -130,25 +136,45 @@ def build_harness_manifest() -> dict[str, Any]:
             {
                 "id": "fixtures",
                 "title": "Scenario Fixtures",
-                "purpose": "Represent after-sales workflows as repeatable customer cases with expected intent, tools, citations, and safety behavior.",
+                "purpose": (
+                    "Represent after-sales workflows as repeatable customer cases with expected "
+                    "intent, tools, citations, and safety behavior."
+                ),
                 "evidence": ["app.evals.harness.BASE_CASES", "frontend scenario catalog"],
             },
             {
                 "id": "execution",
                 "title": "Controlled Execution",
-                "purpose": "Run the agent through a bounded graph with typed business tools instead of free-form side effects.",
-                "evidence": ["router", "rag_answer", "order_refund", "ticket_escalation", "guardrail", "answer_composer", "memory_writer"],
+                "purpose": (
+                    "Run the agent through a bounded graph with typed business tools instead of "
+                    "free-form side effects."
+                ),
+                "evidence": [
+                    "router",
+                    "rag_answer",
+                    "order_refund",
+                    "ticket_escalation",
+                    "guardrail",
+                    "answer_composer",
+                    "memory_writer",
+                ],
             },
             {
                 "id": "observability",
                 "title": "Observability",
-                "purpose": "Persist the path, tool calls, retrieved docs, token stream, memory, and latency for debugging and replay.",
+                "purpose": (
+                    "Persist the path, tool calls, retrieved docs, token stream, memory, and "
+                    "latency for debugging and replay."
+                ),
                 "evidence": ["/api/conversations/{id}", "/api/conversations/{id}/stream-state"],
             },
             {
                 "id": "gates",
                 "title": "Quality Gates",
-                "purpose": "Block risky prompt, tool, model, or KB changes when regression metrics fail thresholds.",
+                "purpose": (
+                    "Block risky prompt, tool, model, or KB changes when regression metrics fail "
+                    "thresholds."
+                ),
                 "evidence": ["/api/evals/run", "CI smoke", "manual live eval"],
             },
         ],
