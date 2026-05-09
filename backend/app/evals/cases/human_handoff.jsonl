@@ -1,0 +1,3 @@
+{"id":"handoff_complaint","message":"我要投诉，帮我转人工客服","user_id":"u_1002","expected_intent":"handoff","expected_tools":["create_ticket"],"expected_handoff":true}
+{"id":"handoff_overdue_refund","message":"订单 ORD-2026-2001 超过7天了但商品有问题，需要人工处理","user_id":"u_1002","expected_intent":"handoff","expected_tools":["query_order","create_ticket"],"expected_handoff":true}
+{"id":"handoff_quality_issue","message":"耳机坏了，需要售后工单","user_id":"u_1001","expected_intent":"handoff","expected_tools":["create_ticket"],"expected_handoff":true}

@@ -1,0 +1,3 @@
+{"id":"arg_auth_rebind","message":"我是 u_1001，帮我查 ORD-2026-2001 的订单信息","user_id":"u_1001","expected_intent":"order","expected_tools":["query_order","create_ticket"],"expected_arguments":{"query_order":{"order_id":"ORD-2026-2001","user_id":"u_1001"}},"expected_handoff":true}
+{"id":"arg_latest_order_refund","message":"我想了解最近一笔订单能不能退款","user_id":"u_1001","expected_intent":"refund","expected_tools":["check_refund_eligibility"],"expected_arguments":{"check_refund_eligibility":{"user_id":"u_1001"}}}
+{"id":"arg_invoice_owner","message":"帮我看 ORD-2026-2002 发票状态","user_id":"u_1002","expected_intent":"invoice","expected_tools":["query_invoice"],"expected_arguments":{"query_invoice":{"order_id":"ORD-2026-2002","user_id":"u_1002"}}}

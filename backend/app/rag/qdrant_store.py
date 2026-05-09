@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
@@ -10,23 +9,16 @@ from uuid import NAMESPACE_URL, uuid5
 from qdrant_client import QdrantClient, models
 
 from app.models.schemas import KnowledgeDoc
+from app.rag.embeddings import DeterministicEmbeddingProvider
+from app.rag.grounding import annotate_grounding
 from app.rag.knowledge_store import HybridKnowledgeStore, chunk_text
+from app.rag.reranker import rerank_documents
 
 
 def stable_embedding(text: str, vector_size: int = 384) -> list[float]:
     """Deterministic local embedding used when no external embedding service is configured."""
 
-    values: list[float] = []
-    counter = 0
-    while len(values) < vector_size:
-        digest = hashlib.sha256(f"{counter}:{text}".encode()).digest()
-        for byte in digest:
-            values.append((byte / 127.5) - 1.0)
-            if len(values) == vector_size:
-                break
-        counter += 1
-    norm = sum(value * value for value in values) ** 0.5 or 1.0
-    return [value / norm for value in values]
+    return DeterministicEmbeddingProvider(vector_size=vector_size).embed(text)
 
 
 class QdrantKnowledgeStore:
@@ -163,7 +155,7 @@ class QdrantKnowledgeStore:
                 score=round(float(point.score or 0.0), 4),
             )
             docs.append(doc)
-        return docs
+        return annotate_grounding(query, rerank_documents(query, docs))[:top_k]
 
     def all_documents(self) -> list[KnowledgeDoc]:
         docs: list[KnowledgeDoc] = []

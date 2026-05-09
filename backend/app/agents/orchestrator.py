@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict
 from typing import Any
 
 from app.agents.guardrails import check_input_safety, check_output_safety
 from app.agents.router import classify_intent, extract_order_id
+from app.auth.context import AuthContext, build_dev_auth_context
 from app.data.repository import DemoRepository
 from app.llm.provider import LLMProvider
 from app.models.schemas import (
@@ -19,6 +20,9 @@ from app.models.schemas import (
     ToolCallRecord,
 )
 from app.tools.business_tools import BusinessToolRegistry
+from app.tools.runtime import ToolRuntime
+
+NodeHandler = Callable[[AgentState], Awaitable[None]]
 
 
 def _event(event: str, **data: Any) -> StreamEvent:
@@ -26,7 +30,7 @@ def _event(event: str, **data: Any) -> StreamEvent:
 
 
 class AgentOrchestrator:
-    """Coordinates SmartCS agents and emits a frontend-friendly execution stream."""
+    """Case-driven SmartCS agent runtime with checkpoints and human confirmation."""
 
     def __init__(
         self,
@@ -34,10 +38,12 @@ class AgentOrchestrator:
         knowledge_store: Any,
         tools: BusinessToolRegistry,
         llm: LLMProvider,
+        tool_runtime: ToolRuntime | None = None,
     ) -> None:
         self.repository = repository
         self.knowledge_store = knowledge_store
         self.tools = tools
+        self.tool_runtime = tool_runtime or ToolRuntime(repository, tools)
         self.llm = llm
 
     async def run_stream(
@@ -45,57 +51,67 @@ class AgentOrchestrator:
         message: str,
         user_id: str = "anonymous",
         conversation_id: str | None = None,
+        auth_context: AuthContext | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        conversation = self.repository.get_or_create_conversation(conversation_id, user_id)
+        auth = auth_context or build_dev_auth_context(None, user_id)
+        conversation = self.repository.get_or_create_conversation(conversation_id, auth.user_id)
+        prior_messages = list(conversation.messages)
         user_message = ChatMessage(role="user", content=message)
         self.repository.append_message(conversation.id, user_message)
         state = AgentState(
-            messages=[*conversation.messages, user_message],
-            user_profile=self.repository.get_user_profile(user_id),
+            messages=[*prior_messages, user_message],
+            user_profile=self.repository.get_user_profile(auth.user_id),
+            auth_context=auth.to_dict(),
             conversation_id=conversation.id,
         )
         steps: list[AgentStep] = []
 
         async for event in self._run_node("router", state, steps, self._router):
             yield event
+        async for event in self._run_node("input_policy", state, steps, self._input_policy):
+            yield event
+        async for event in self._run_node("case_binding", state, steps, self._case_binding):
+            yield event
 
-        input_guardrail = check_input_safety(message)
-        if input_guardrail.blocked:
-            state.guardrail_result = input_guardrail
-            async for event in self._run_node(
-                "ticket_escalation", state, steps, self._ticket_escalation
-            ):
+        if state.guardrail_result and state.guardrail_result.blocked:
+            async for event in self._run_node("human_handoff", state, steps, self._human_handoff):
                 yield event
             async for event in self._run_node(
-                "answer_composer", state, steps, self._answer_composer
+                "compose_answer",
+                state,
+                steps,
+                self._answer_composer,
             ):
                 yield event
             async for event in self._finalize(state, steps):
                 yield event
             return
 
-        async for event in self._run_node("rag_answer", state, steps, self._rag_answer):
+        async for event in self._run_node("retrieve_policy", state, steps, self._retrieve_policy):
+            yield event
+        async for event in self._run_node("tool_policy", state, steps, self._business_action):
             yield event
 
-        if state.intent in {"order", "refund", "invoice", "ticket", "handoff"}:
-            async for event in self._run_node("order_refund", state, steps, self._order_refund):
-                yield event
-
-        if state.intent in {"ticket", "handoff"} or state.metadata.get("needs_ticket"):
+        if state.pending_confirmation:
             async for event in self._run_node(
-                "ticket_escalation", state, steps, self._ticket_escalation
+                "human_confirm", state, steps, self._human_confirmation
             ):
+                yield event
+        elif state.intent in {"ticket", "handoff"} or state.metadata.get("needs_ticket"):
+            async for event in self._run_node("human_handoff", state, steps, self._human_handoff):
+                yield event
+        else:
+            async for event in self._skip_node("human_confirm", state, steps, "no confirmation"):
+                yield event
+            async for event in self._skip_node("human_handoff", state, steps, "no handoff"):
                 yield event
 
         async for event in self._run_node("guardrail", state, steps, self._guardrail):
             yield event
-
-        async for event in self._run_node("answer_composer", state, steps, self._answer_composer):
+        async for event in self._run_node("compose_answer", state, steps, self._answer_composer):
             yield event
-
         async for event in self._run_node("memory_writer", state, steps, self._memory_writer):
             yield event
-
         async for event in self._finalize(state, steps):
             yield event
 
@@ -104,28 +120,142 @@ class AgentOrchestrator:
         message: str,
         user_id: str = "anonymous",
         conversation_id: str | None = None,
+        auth_context: AuthContext | None = None,
     ) -> AgentState:
         final: AgentState | None = None
-        async for event in self.run_stream(message, user_id, conversation_id):
+        async for event in self.run_stream(message, user_id, conversation_id, auth_context):
             if event.event == "final":
                 final = event.data["state"]
         if final is None:  # pragma: no cover - defensive
             raise RuntimeError("Agent run did not finalize")
         return final
 
+    async def confirm_task(
+        self,
+        task_id: str,
+        auth_context: AuthContext,
+        approved: bool = True,
+    ) -> dict[str, Any]:
+        task = self.repository.get_task(task_id)
+        if task is None:
+            raise KeyError(f"Task not found: {task_id}")
+        case = self.repository.get_case(task["case_id"])
+        if case is None:
+            raise KeyError(f"Case not found: {task['case_id']}")
+        if task["status"] != "pending":
+            return {"case": case, "task": task, "tool_call": None, "message": "任务已处理"}
+        if not approved:
+            updated_task = self.repository.update_task(
+                task_id,
+                {
+                    "status": "cancelled",
+                    "result": {"approved": False, "reason": "customer_cancelled"},
+                },
+            )
+            updated_case = self.repository.update_case(
+                case["id"],
+                {"status": "open", "summary": "用户取消了待确认动作"},
+            )
+            return {
+                "case": updated_case,
+                "task": updated_task,
+                "tool_call": None,
+                "message": "已取消待确认动作，未执行副作用工具。",
+            }
+
+        pending = task.get("pending_confirmation") or {}
+        tool_name = str(pending.get("tool"))
+        arguments = dict(pending.get("arguments") or {})
+        idempotency_key = str(pending.get("idempotency_key") or task["resume_token"])
+        call = await self.tool_runtime.execute(
+            tool_name,
+            arguments,
+            auth_context,
+            conversation_id=case["conversation_id"],
+            case_id=case["id"],
+            task_id=task_id,
+            idempotency_key=idempotency_key,
+            confirmed=True,
+        )
+        updated_task = self.repository.update_task(
+            task_id,
+            {
+                "status": "completed" if call.success else "failed",
+                "result": {
+                    "approved": True,
+                    "tool_call": asdict(call),
+                },
+            },
+        )
+        resolution = "退款申请已提交" if call.name == "create_refund" and call.success else ""
+        updated_case = self.repository.update_case(
+            case["id"],
+            {
+                "status": "processing" if call.success else "open",
+                "summary": _summarize_tool(call),
+                "resolution": resolution,
+            },
+        )
+        if call.success:
+            self.repository.append_message(
+                case["conversation_id"],
+                ChatMessage(role="assistant", content=_summarize_tool(call)),
+            )
+        return {
+            "case": updated_case,
+            "task": updated_task,
+            "tool_call": asdict(call),
+            "message": _summarize_tool(call),
+        }
+
+    async def handoff_case(
+        self,
+        case_id: str,
+        auth_context: AuthContext,
+        reason: str = "人工坐席接管",
+    ) -> dict[str, Any]:
+        case = self.repository.get_case(case_id)
+        if case is None:
+            raise KeyError(f"Case not found: {case_id}")
+        call = await self.tool_runtime.execute(
+            "handoff_to_human",
+            {
+                "reason": reason,
+                "conversation_id": case["conversation_id"],
+            },
+            auth_context,
+            conversation_id=case["conversation_id"],
+            case_id=case_id,
+            idempotency_key=f"handoff:{case_id}",
+            confirmed=True,
+        )
+        ticket = call.result if call.success else None
+        updated_case = self.repository.update_case(
+            case_id,
+            {
+                "status": "handoff",
+                "related_ticket_id": ticket.get("id") if isinstance(ticket, dict) else None,
+                "summary": reason,
+                "risk_level": "high",
+            },
+        )
+        return {"case": updated_case, "tool_call": asdict(call)}
+
     async def _run_node(
         self,
         name: str,
         state: AgentState,
         steps: list[AgentStep],
-        handler,
+        handler: NodeHandler,
     ) -> AsyncIterator[StreamEvent]:
         yield _event("agent_step", agent=name, status="started", message=f"{name} started")
         start = time.perf_counter()
         tool_call_count = len(state.tool_calls)
+        previous_task_id = state.task_id
         try:
             await handler(state)
             elapsed = (time.perf_counter() - start) * 1000
+            state.graph_path.append(name)
             step = AgentStep(
                 agent=name,
                 status="completed",
@@ -134,12 +264,39 @@ class AgentOrchestrator:
             )
             steps.append(step)
             yield _event("agent_step", **asdict(step))
-            if name == "rag_answer":
+            yield _event(
+                "checkpoint",
+                checkpoint_id=state.checkpoint_id,
+                conversation_id=state.conversation_id,
+                case_id=state.case_id,
+                task_id=state.task_id,
+                graph_path=state.graph_path,
+            )
+            if name == "case_binding" and state.metadata.get("latest_case"):
+                yield _event("case_update", **state.metadata["latest_case"])
+            if (
+                state.task_id
+                and state.task_id != previous_task_id
+                and state.metadata.get("latest_task")
+            ):
+                yield _event("task_update", **state.metadata["latest_task"])
+            if name == "retrieve_policy":
                 for doc in state.retrieved_docs[:3]:
                     yield _event("citation", **asdict(doc))
-            if name in {"order_refund", "ticket_escalation"}:
+            if name in {"tool_policy", "human_handoff"}:
                 for call in state.tool_calls[tool_call_count:]:
                     yield _event("tool_call", **asdict(call))
+                    if call.audit_id:
+                        yield _event("audit", audit_id=call.audit_id, tool_name=call.name)
+            if name == "human_confirm" and state.pending_confirmation:
+                yield _event(
+                    "action_required",
+                    action_required=state.action_required,
+                    pending_confirmation=state.pending_confirmation,
+                    case_id=state.case_id,
+                    task_id=state.task_id,
+                    resume_token=state.resume_token,
+                )
         except Exception as exc:  # pragma: no cover - defensive boundary
             elapsed = (time.perf_counter() - start) * 1000
             step = AgentStep(
@@ -151,12 +308,49 @@ class AgentOrchestrator:
             steps.append(step)
             yield _event("error", agent=name, message=str(exc))
 
+    async def _skip_node(
+        self,
+        name: str,
+        state: AgentState,
+        steps: list[AgentStep],
+        reason: str,
+    ) -> AsyncIterator[StreamEvent]:
+        step = AgentStep(agent=name, status="skipped", message=reason, elapsed_ms=0.0)
+        state.graph_path.append(name)
+        steps.append(step)
+        yield _event("agent_step", **asdict(step))
+
     async def _router(self, state: AgentState) -> None:
         latest = state.messages[-1].content
         state.intent = classify_intent(latest)
         state.metadata["order_id"] = extract_order_id(latest)
 
-    async def _rag_answer(self, state: AgentState) -> None:
+    async def _input_policy(self, state: AgentState) -> None:
+        result = check_input_safety(state.messages[-1].content)
+        state.guardrail_result = result
+        if result.blocked:
+            state.metadata["needs_ticket"] = True
+            state.metadata["risk_level"] = "high"
+
+    async def _case_binding(self, state: AgentState) -> None:
+        auth = _auth_from_state(state)
+        latest = state.messages[-1].content
+        case = self.repository.create_or_get_case(
+            user_id=auth.user_id,
+            tenant_id=auth.tenant_id,
+            conversation_id=state.conversation_id,
+            category=state.intent,
+            priority="high" if state.metadata.get("risk_level") == "high" else "medium",
+            source_channel="web-console",
+            related_order_id=state.metadata.get("order_id"),
+            summary=latest[:180],
+            risk_level=state.metadata.get("risk_level", "low"),
+        )
+        state.case_id = case["id"]
+        state.task_id = case.get("current_task_id")
+        state.metadata["latest_case"] = case
+
+    async def _retrieve_policy(self, state: AgentState) -> None:
         query = state.messages[-1].content
         category = {
             "refund": "refund",
@@ -165,92 +359,157 @@ class AgentOrchestrator:
             "ticket": "support",
         }.get(state.intent)
         docs = self.knowledge_store.search(query, top_k=5, category=category)
-        if not docs:
-            docs = self.knowledge_store.search(query, top_k=5)
+        fallback_docs = self.knowledge_store.search(query, top_k=5)
+        seen = {doc.id for doc in docs}
+        docs = [*docs, *[doc for doc in fallback_docs if doc.id not in seen]][:5]
         state.retrieved_docs = docs
         if docs:
             state.draft_answer = f"知识库命中：{docs[0].title}。{docs[0].content[:160]}"
         else:
             state.draft_answer = "知识库暂无直接命中，需要结合业务工具或人工客服处理。"
 
-    async def _order_refund(self, state: AgentState) -> None:
+    async def _business_action(self, state: AgentState) -> None:
         latest = state.messages[-1].content
-        user_id = state.user_profile["user_id"]
+        auth = _auth_from_state(state)
         order_id = state.metadata.get("order_id")
-        if not order_id:
-            latest_order = self.repository.latest_order_for_user(user_id)
+        if state.intent in {"order", "refund", "invoice"} and not order_id:
+            latest_order = self.repository.latest_order_for_user(auth.user_id)
             order_id = latest_order.id if latest_order else ""
             state.metadata["order_id"] = order_id
-        if not order_id:
+            if state.case_id and order_id:
+                self.repository.update_case(state.case_id, {"related_order_id": order_id})
+        if state.intent in {"faq", "unknown"}:
+            state.metadata["tool_summary"] = "本轮无需业务工具，基于知识库回复。"
+            return
+        if state.intent == "handoff" and not order_id:
             state.metadata["needs_ticket"] = True
-            state.metadata["tool_summary"] = "未找到可处理的订单号"
+            state.metadata["tool_summary"] = "用户主动要求人工接管。"
+            return
+        if not order_id and state.intent in {"order", "refund", "invoice"}:
+            state.metadata["needs_ticket"] = True
+            state.metadata["tool_summary"] = "未找到可处理的订单号。"
             return
 
         if state.intent == "invoice":
-            call = await self.tools.call_tool(
+            call = await self._execute_tool(
+                state,
                 "query_invoice",
-                {"order_id": order_id, "user_id": user_id},
+                {"order_id": order_id},
+                auth,
+                idempotency_key=f"invoice:{auth.user_id}:{order_id}",
             )
-            state.tool_calls.append(call)
             state.metadata["tool_summary"] = _summarize_tool(call)
             return
 
         if state.intent == "refund":
-            check = await self.tools.call_tool(
-                "check_refund_eligibility", {"order_id": order_id, "user_id": user_id}
+            check = await self._execute_tool(
+                state,
+                "check_refund_eligibility",
+                {"order_id": order_id},
+                auth,
+                idempotency_key=f"refund-check:{auth.user_id}:{order_id}",
             )
-            state.tool_calls.append(check)
             eligible = bool((check.result or {}).get("eligible")) if check.success else False
             wants_create = any(word in latest for word in ("申请", "我要", "帮我", "退货", "退款"))
             if eligible and wants_create:
-                refund = await self.tools.call_tool(
-                    "create_refund",
-                    {"order_id": order_id, "user_id": user_id, "reason": "用户在线申请售后退款"},
+                pending = {
+                    "tool": "create_refund",
+                    "arguments": {
+                        "order_id": order_id,
+                        "reason": "用户在线申请售后退款",
+                    },
+                    "idempotency_key": f"refund-create:{auth.user_id}:{order_id}",
+                    "summary": _summarize_tool(check),
+                    "risk_level": "medium",
+                }
+                task = self.repository.create_task(
+                    case_id=state.case_id or "",
+                    task_type="customer_confirmation",
+                    required_action="confirm_refund",
+                    pending_confirmation=pending,
                 )
-                state.tool_calls.append(refund)
+                state.task_id = task["id"]
+                state.resume_token = task["resume_token"]
+                state.pending_confirmation = {**pending, "task_id": state.task_id}
+                state.action_required = "customer_confirmation"
+                state.metadata["latest_task"] = task
+                state.metadata["tool_summary"] = "退款资格已通过，等待用户确认后再创建退款申请。"
             elif not eligible:
                 state.metadata["needs_ticket"] = True
-            state.metadata["tool_summary"] = "; ".join(
-                _summarize_tool(call) for call in state.tool_calls[-2:]
-            )
+                state.metadata["tool_summary"] = _summarize_tool(check)
+            else:
+                state.metadata["tool_summary"] = _summarize_tool(check)
             return
 
-        call = await self.tools.call_tool("query_order", {"order_id": order_id, "user_id": user_id})
-        state.tool_calls.append(call)
-        if not (call.result or {}).get("authorized"):
-            state.metadata["needs_ticket"] = True
-        state.metadata["tool_summary"] = _summarize_tool(call)
+        if state.intent in {"order", "ticket", "handoff", "privacy"}:
+            call = await self._execute_tool(
+                state,
+                "query_order",
+                {"order_id": order_id},
+                auth,
+                idempotency_key=f"order:{auth.user_id}:{order_id}",
+            )
+            if not (call.result or {}).get("authorized"):
+                state.metadata["needs_ticket"] = True
+                state.metadata["risk_level"] = "high"
+                if state.case_id:
+                    self.repository.update_case(state.case_id, {"risk_level": "high"})
+            state.metadata["tool_summary"] = _summarize_tool(call)
 
-    async def _ticket_escalation(self, state: AgentState) -> None:
-        user_id = state.user_profile["user_id"]
+    async def _human_confirmation(self, state: AgentState) -> None:
+        if not state.pending_confirmation:
+            return
+        state.metadata["tool_summary"] = (
+            f"{state.metadata.get('tool_summary', '')} 请等待用户确认任务 {state.task_id}。"
+        ).strip()
+
+    async def _human_handoff(self, state: AgentState) -> None:
+        auth = _auth_from_state(state)
         latest = state.messages[-1].content
         reason = state.guardrail_result.reason if state.guardrail_result else latest[:120]
-        if state.guardrail_result and state.guardrail_result.blocked:
-            call = await self.tools.call_tool(
-                "handoff_to_human",
-                {
-                    "user_id": user_id,
-                    "reason": reason,
-                    "conversation_id": state.conversation_id,
-                },
-            )
-        else:
-            description = (
-                f"用户问题：{latest}\n"
-                f"系统摘要：{state.metadata.get('tool_summary', '')}"
-            )
-            call = await self.tools.call_tool(
-                "create_ticket",
-                {
-                    "user_id": user_id,
-                    "title": "售后问题人工跟进",
-                    "description": description,
-                    "priority": "medium",
-                    "category": state.intent,
-                },
-            )
-        state.tool_calls.append(call)
+        description = (
+            f"用户问题：{latest}\n"
+            f"系统摘要：{state.metadata.get('tool_summary', '')}\n"
+            f"Case：{state.case_id or '-'}"
+        )
+        tool_name = (
+            "handoff_to_human"
+            if state.guardrail_result and state.guardrail_result.blocked
+            else "create_ticket"
+        )
+        arguments = (
+            {"reason": reason, "conversation_id": state.conversation_id}
+            if tool_name == "handoff_to_human"
+            else {
+                "title": "售后问题人工跟进",
+                "description": description,
+                "priority": "high" if state.metadata.get("risk_level") == "high" else "medium",
+                "category": state.intent,
+                "handoff_reason": reason,
+                "agent_summary": state.metadata.get("tool_summary", ""),
+                "latest_customer_message": latest,
+                "suggested_reply": state.draft_answer,
+            }
+        )
+        call = await self._execute_tool(
+            state,
+            tool_name,
+            arguments,
+            auth,
+            idempotency_key=f"{tool_name}:{state.case_id}:{state.trace_id}",
+            confirmed=True,
+        )
         state.metadata["ticket"] = call.result
+        if state.case_id and isinstance(call.result, dict):
+            case = self.repository.update_case(
+                state.case_id,
+                {
+                    "status": "handoff",
+                    "related_ticket_id": call.result.get("id"),
+                    "summary": _summarize_tool(call),
+                },
+            )
+            state.metadata["latest_case"] = case
 
     async def _guardrail(self, state: AgentState) -> None:
         candidate = "\n".join(
@@ -264,6 +523,12 @@ class AgentOrchestrator:
         state.guardrail_result = check_output_safety(candidate)
 
     async def _answer_composer(self, state: AgentState) -> None:
+        if state.pending_confirmation:
+            state.final_answer = (
+                "退款资格已校验通过，但创建退款属于有副作用操作。"
+                f"请确认是否继续创建退款申请。任务号：{state.task_id}。"
+            )
+            return
         if state.guardrail_result and state.guardrail_result.blocked:
             ticket = state.metadata.get("ticket") or {}
             state.final_answer = (
@@ -275,13 +540,14 @@ class AgentOrchestrator:
         tool_summary = state.metadata.get("tool_summary", "")
         citations = ", ".join(doc.source for doc in state.retrieved_docs[:2]) or "知识库"
         system_prompt = (
-            "你是电商售后智能客服。回答必须简洁、可靠，基于知识库和工具结果，不编造。"
-            "如果工具返回无权限或信息不足，要说明下一步。"
+            "你是电商售后智能客服。回答必须简洁、可靠，基于知识库、Case状态和工具结果，"
+            "不要编造。如果需要确认或人工处理，要明确下一步动作。"
         )
         user_prompt = (
             f"用户画像：{state.user_profile}\n"
             f"用户问题：{state.messages[-1].content}\n"
             f"意图：{state.intent}\n"
+            f"Case：{state.case_id}\n"
             f"知识库草稿：{state.draft_answer}\n"
             f"工具结果：{tool_summary}\n"
             f"引用来源：{citations}\n"
@@ -298,9 +564,32 @@ class AgentOrchestrator:
 
     async def _memory_writer(self, state: AgentState) -> None:
         state.metadata["memory_summary"] = (
-            f"最近意图={state.intent}; 订单={state.metadata.get('order_id', '无')}; "
+            f"最近意图={state.intent}; Case={state.case_id or '无'}; "
+            f"Task={state.task_id or '无'}; 订单={state.metadata.get('order_id', '无')}; "
             f"工具={','.join(call.name for call in state.tool_calls[-3:]) or '无'}"
         )
+
+    async def _execute_tool(
+        self,
+        state: AgentState,
+        tool_name: str,
+        arguments: dict[str, Any],
+        auth_context: AuthContext,
+        idempotency_key: str | None = None,
+        confirmed: bool = False,
+    ) -> ToolCallRecord:
+        call = await self.tool_runtime.execute(
+            tool_name,
+            arguments,
+            auth_context,
+            conversation_id=state.conversation_id,
+            case_id=state.case_id,
+            task_id=state.task_id,
+            idempotency_key=idempotency_key,
+            confirmed=confirmed,
+        )
+        state.tool_calls.append(call)
+        return call
 
     async def _finalize(
         self,
@@ -324,6 +613,11 @@ class AgentOrchestrator:
             "final",
             conversation_id=state.conversation_id,
             trace_id=state.trace_id,
+            case_id=state.case_id,
+            task_id=state.task_id,
+            action_required=state.action_required,
+            pending_confirmation=state.pending_confirmation,
+            resume_token=state.resume_token,
             answer=state.final_answer,
             intent=state.intent,
             citations=[asdict(doc) for doc in state.retrieved_docs[:3]],
@@ -331,6 +625,8 @@ class AgentOrchestrator:
             guardrail=asdict(state.guardrail_result)
             if isinstance(state.guardrail_result, GuardrailResult)
             else None,
+            graph_path=state.graph_path,
+            auth_context=state.auth_context,
             state=state,
         )
 
@@ -338,11 +634,17 @@ class AgentOrchestrator:
     def _node_summary(name: str, state: AgentState) -> str:
         if name == "router":
             return f"intent={state.intent}"
-        if name == "rag_answer":
+        if name == "input_policy":
+            return state.guardrail_result.reason if state.guardrail_result else "not_checked"
+        if name == "case_binding":
+            return f"case={state.case_id}"
+        if name == "retrieve_policy":
             return f"retrieved={len(state.retrieved_docs)}"
-        if name == "order_refund":
+        if name == "tool_policy":
             return state.metadata.get("tool_summary", "no tool call")
-        if name == "ticket_escalation":
+        if name == "human_confirm":
+            return f"pending={state.task_id}" if state.task_id else "no pending task"
+        if name == "human_handoff":
             ticket = state.metadata.get("ticket") or {}
             return f"ticket={ticket.get('id', 'none')}"
         if name == "guardrail":
@@ -352,16 +654,27 @@ class AgentOrchestrator:
         return "completed"
 
 
+def _auth_from_state(state: AgentState) -> AuthContext:
+    payload = state.auth_context or {}
+    return AuthContext(
+        user_id=str(payload.get("user_id") or "anonymous"),
+        tenant_id=str(payload.get("tenant_id") or "demo-tenant"),
+        roles=tuple(payload.get("roles") or ("customer",)),
+        permissions=tuple(payload.get("permissions") or AuthContext("anonymous").permissions),
+        source=str(payload.get("source") or "state"),
+    )
+
+
 def _summarize_tool(call: ToolCallRecord) -> str:
     if not call.success:
-        return f"{call.name} failed: {call.error}"
+        return f"{call.name} failed: {call.error or (call.result or {}).get('reason', 'unknown')}"
     result = call.result or {}
     if call.name == "query_order":
         if not result.get("authorized"):
             return result.get("error", "订单查询失败")
         order = result["order"]
         return (
-            f"订单{order['id']}状态={order['status']}，商品={order['item']}，"
+            f"订单{order['id']}状态{order['status']}，商品{order['item']}，"
             f"物流={order['carrier']} {order['tracking_no']}"
         )
     if call.name == "check_refund_eligibility":
@@ -370,12 +683,12 @@ def _summarize_tool(call: ToolCallRecord) -> str:
         if not result.get("created"):
             return f"退款未创建：{result.get('reason', result.get('error', '未知原因'))}"
         refund = result["refund"]
-        return f"已创建退款{refund['id']}，金额={refund['amount']}，状态={refund['status']}"
+        return f"已创建退款{refund['id']}，金额{refund['amount']}，状态{refund['status']}"
     if call.name == "query_invoice":
         download_url = result.get("download_url") or "暂无"
-        return f"发票状态={result.get('invoice_status')}，下载={download_url}"
+        return f"发票状态{result.get('invoice_status')}，下载={download_url}"
     if call.name in {"create_ticket", "handoff_to_human"}:
-        return f"已创建工单{result.get('id')}，状态={result.get('status')}"
+        return f"已创建工单{result.get('id')}，状态{result.get('status')}"
     return str(result)
 
 

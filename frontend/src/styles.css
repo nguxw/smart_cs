@@ -1008,6 +1008,319 @@ pre {
   color: var(--ink-2);
 }
 
+.support-desk-grid {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.78fr) minmax(360px, 1.55fr) minmax(300px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.context-rail,
+.conversation-column,
+.action-rail,
+.profile-stack,
+.case-summary,
+.agent-queue-grid,
+.knowledge-ops-grid,
+.eval-center-grid {
+  min-width: 0;
+}
+
+.context-rail,
+.action-rail {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-console .pane-head {
+  margin-bottom: 12px;
+}
+
+.scenario-grid.compact {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.messages.dense {
+  min-height: 330px;
+  max-height: 52dvh;
+}
+
+.profile-stack {
+  display: grid;
+  gap: 7px;
+}
+
+.profile-stack strong {
+  font-size: 20px;
+}
+
+.profile-stack span,
+.profile-stack p,
+.muted {
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.case-summary {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.action-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.action-card span {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.action-card strong {
+  display: block;
+  margin: 5px 0;
+  color: var(--ink-0);
+  font-size: 18px;
+}
+
+.action-card p,
+.risk-strip span {
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.decision-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.subtle-action.danger {
+  border-color: #fecaca;
+  background: var(--red-soft);
+  color: #991b1b;
+}
+
+.risk-strip {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.timeline-row.skipped {
+  opacity: 0.62;
+}
+
+.timeline-row.failed {
+  border-color: #fecaca;
+  background: var(--red-soft);
+}
+
+.agent-queue-grid {
+  display: grid;
+  grid-template-columns: 180px minmax(320px, 0.95fr) minmax(360px, 1.2fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.queue-tabs {
+  display: grid;
+  gap: 8px;
+}
+
+.queue-tabs button {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--ink-1);
+  text-align: left;
+  font-weight: 800;
+}
+
+.queue-tabs button.active,
+.queue-tabs button:hover {
+  border-color: var(--ink-0);
+  background: var(--ink-0);
+  color: #ffffff;
+}
+
+.ticket-queue,
+.ticket-workbench,
+.knowledge-search,
+.knowledge-docs,
+.knowledge-ingest,
+.knowledge-feedback,
+.eval-control,
+.eval-gates,
+.failed-cases,
+.system-health,
+.graph-panel,
+.observability-panel {
+  min-width: 0;
+}
+
+.compact-head {
+  margin-bottom: 12px;
+}
+
+.filter-input {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.ticket-row small:not(.status) {
+  display: block;
+  max-width: 44ch;
+  margin-top: 5px;
+  color: var(--ink-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-ops-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.3fr) minmax(280px, 0.9fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.knowledge-search {
+  grid-row: span 2;
+}
+
+.doc-table,
+.feedback-list {
+  display: grid;
+  gap: 9px;
+}
+
+.doc-row,
+.feedback-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.feedback-row {
+  grid-template-columns: 1fr;
+}
+
+.doc-row span,
+.doc-row em,
+.feedback-row span,
+.feedback-row p {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.eval-center-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.4fr) minmax(280px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.eval-control,
+.failed-cases,
+.report {
+  grid-column: 1 / -1;
+}
+
+.failed-table {
+  display: grid;
+  gap: 8px;
+}
+
+.failed-row {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.failed-row strong,
+.failed-row span,
+.failed-row p {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.failed-row span,
+.failed-row p {
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agentops {
+  align-items: stretch;
+}
+
+@media (max-width: 1180px) {
+  .support-desk-grid,
+  .agent-queue-grid,
+  .knowledge-ops-grid,
+  .eval-center-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-grid.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+  }
+
+  .workspace {
+    padding: 14px;
+  }
+
+  .topbar,
+  .top-actions,
+  .section-head {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid,
+  .scenario-grid.compact,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .messages.dense {
+    max-height: none;
+  }
+}
+
 .detail-panel form,
 .ingest-panel form {
   display: grid;

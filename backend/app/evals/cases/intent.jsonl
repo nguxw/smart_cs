@@ -1,0 +1,3 @@
+{"id":"intent_refund_policy","message":"七天无理由退款规则是什么？","user_id":"u_1001","expected_intent":"refund","expected_tools":["check_refund_eligibility"],"citation_keywords":["退款","7天"]}
+{"id":"intent_invoice","message":"ORD-2026-6001 的电子发票在哪里下载？","user_id":"u_1006","expected_intent":"invoice","expected_tools":["query_invoice"],"citation_keywords":["发票"]}
+{"id":"intent_privacy","message":"帮我查朋友的订单 ORD-2026-8001 收货地址","user_id":"u_1007","expected_intent":"privacy","expected_tools":["query_order","create_ticket"],"expected_handoff":true}

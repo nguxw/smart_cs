@@ -45,8 +45,74 @@ class Ticket:
     priority: str
     category: str
     status: str = "open"
+    assigned_to: str | None = None
+    assignee_name: str | None = None
+    sla_deadline: str | None = None
+    handoff_reason: str = ""
+    agent_summary: str = ""
+    customer_emotion: str = "neutral"
+    latest_customer_message: str = ""
+    suggested_reply: str = ""
+    human_reply: str = ""
+    resolution_type: str = ""
+    closed_reason: str = ""
+    csat_score: int | None = None
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
+
+
+@dataclass
+class SupportCase:
+    id: str
+    user_id: str
+    tenant_id: str
+    conversation_id: str
+    category: str
+    status: str
+    priority: str
+    source_channel: str
+    related_order_id: str | None = None
+    related_ticket_id: str | None = None
+    current_task_id: str | None = None
+    resolution: str = ""
+    risk_level: str = "low"
+    summary: str = ""
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+
+@dataclass
+class CaseTask:
+    id: str
+    case_id: str
+    type: str
+    status: str
+    required_action: str
+    pending_confirmation: dict[str, Any] | None = None
+    assigned_to: str | None = None
+    deadline: str | None = None
+    result: dict[str, Any] | None = None
+    resume_token: str = field(default_factory=lambda: uuid4().hex)
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+
+@dataclass
+class ToolAuditLog:
+    id: str
+    conversation_id: str
+    case_id: str | None
+    task_id: str | None
+    tool_name: str
+    arguments: dict[str, Any]
+    auth_context: dict[str, Any]
+    policy_status: str
+    success: bool
+    result: Any = None
+    error: str | None = None
+    idempotency_key: str | None = None
+    requires_confirmation: bool = False
+    created_at: str = field(default_factory=utc_now)
 
 
 @dataclass
@@ -74,6 +140,9 @@ class DemoRepository:
         self.orders: dict[str, Order] = {}
         self.refunds: dict[str, Refund] = {}
         self.tickets: dict[str, Ticket] = {}
+        self.cases: dict[str, SupportCase] = {}
+        self.tasks: dict[str, CaseTask] = {}
+        self.tool_audits: dict[str, ToolAuditLog] = {}
         self.conversations: dict[str, ConversationRecord] = {}
         self._seed()
 
@@ -135,6 +204,17 @@ class DemoRepository:
                 "agent_steps": [asdict(step) for step in record.agent_steps[-50:]],
                 "tool_calls": [asdict(call) for call in record.tool_calls[-50:]],
                 "trace_ids": record.trace_ids[-10:],
+                "cases": [
+                    asdict(case)
+                    for case in self.cases.values()
+                    if case.conversation_id == conversation_id
+                ],
+                "tasks": [
+                    asdict(task)
+                    for task in self.tasks.values()
+                    if self.cases.get(task.case_id)
+                    and self.cases[task.case_id].conversation_id == conversation_id
+                ],
                 "updated_at": record.updated_at,
             }
 
@@ -213,6 +293,18 @@ class DemoRepository:
         description: str,
         priority: str = "medium",
         category: str = "general",
+        assigned_to: str | None = None,
+        assignee_name: str | None = None,
+        sla_deadline: str | None = None,
+        handoff_reason: str = "",
+        agent_summary: str = "",
+        customer_emotion: str = "neutral",
+        latest_customer_message: str = "",
+        suggested_reply: str = "",
+        human_reply: str = "",
+        resolution_type: str = "",
+        closed_reason: str = "",
+        csat_score: int | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             ticket = Ticket(
@@ -222,6 +314,18 @@ class DemoRepository:
                 description=description,
                 priority=priority,
                 category=category,
+                assigned_to=assigned_to,
+                assignee_name=assignee_name,
+                sla_deadline=sla_deadline,
+                handoff_reason=handoff_reason,
+                agent_summary=agent_summary,
+                customer_emotion=customer_emotion,
+                latest_customer_message=latest_customer_message,
+                suggested_reply=suggested_reply,
+                human_reply=human_reply,
+                resolution_type=resolution_type,
+                closed_reason=closed_reason,
+                csat_score=csat_score,
             )
             self.tickets[ticket.id] = ticket
             return asdict(ticket)
@@ -236,8 +340,259 @@ class DemoRepository:
             ticket = self.tickets.get(ticket_id)
             if ticket is None:
                 return None
-            for field_name in ("status", "priority", "category", "title", "description"):
+            for field_name in (
+                "status",
+                "priority",
+                "category",
+                "title",
+                "description",
+                "assigned_to",
+                "assignee_name",
+                "sla_deadline",
+                "handoff_reason",
+                "agent_summary",
+                "customer_emotion",
+                "latest_customer_message",
+                "suggested_reply",
+                "human_reply",
+                "resolution_type",
+                "closed_reason",
+                "csat_score",
+            ):
                 if field_name in payload and payload[field_name] is not None:
                     setattr(ticket, field_name, payload[field_name])
             ticket.updated_at = utc_now()
             return asdict(ticket)
+
+    def create_or_get_case(
+        self,
+        user_id: str,
+        tenant_id: str,
+        conversation_id: str,
+        category: str,
+        priority: str = "medium",
+        source_channel: str = "web",
+        related_order_id: str | None = None,
+        summary: str = "",
+        risk_level: str = "low",
+    ) -> dict[str, Any]:
+        with self._lock:
+            for case in self.cases.values():
+                if (
+                    case.conversation_id == conversation_id
+                    and case.status not in {"resolved", "closed"}
+                ):
+                    case.category = category or case.category
+                    case.related_order_id = related_order_id or case.related_order_id
+                    case.summary = summary or case.summary
+                    case.risk_level = risk_level or case.risk_level
+                    case.updated_at = utc_now()
+                    return asdict(case)
+            case = SupportCase(
+                id=f"CASE-{uuid4().hex[:8].upper()}",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                category=category,
+                status="open",
+                priority=priority,
+                source_channel=source_channel,
+                related_order_id=related_order_id,
+                summary=summary,
+                risk_level=risk_level,
+            )
+            self.cases[case.id] = case
+            return asdict(case)
+
+    def list_cases(
+        self,
+        user_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            cases = list(self.cases.values())
+            if user_id:
+                cases = [case for case in cases if case.user_id == user_id]
+            if status:
+                cases = [case for case in cases if case.status == status]
+            sorted_cases = sorted(cases, key=lambda item: item.updated_at, reverse=True)
+            return [asdict(case) for case in sorted_cases]
+
+    def get_case(self, case_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            case = self.cases.get(case_id)
+            return asdict(case) if case else None
+
+    def update_case(self, case_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            case = self.cases.get(case_id)
+            if case is None:
+                return None
+            for field_name in (
+                "status",
+                "priority",
+                "category",
+                "related_order_id",
+                "related_ticket_id",
+                "current_task_id",
+                "resolution",
+                "risk_level",
+                "summary",
+            ):
+                if field_name in payload and payload[field_name] is not None:
+                    setattr(case, field_name, payload[field_name])
+            case.updated_at = utc_now()
+            return asdict(case)
+
+    def close_case(self, case_id: str, resolution: str) -> dict[str, Any] | None:
+        return self.update_case(case_id, {"status": "resolved", "resolution": resolution})
+
+    def create_task(
+        self,
+        case_id: str,
+        task_type: str,
+        required_action: str,
+        pending_confirmation: dict[str, Any] | None = None,
+        status: str = "pending",
+        assigned_to: str | None = None,
+        deadline: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            task = CaseTask(
+                id=f"TASK-{uuid4().hex[:8].upper()}",
+                case_id=case_id,
+                type=task_type,
+                status=status,
+                required_action=required_action,
+                pending_confirmation=pending_confirmation,
+                assigned_to=assigned_to,
+                deadline=deadline,
+                result=result,
+            )
+            self.tasks[task.id] = task
+            case = self.cases.get(case_id)
+            if case:
+                case.current_task_id = task.id
+                case.status = "waiting_customer" if pending_confirmation else case.status
+                case.updated_at = utc_now()
+            return asdict(task)
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            task = self.tasks.get(task_id)
+            return asdict(task) if task else None
+
+    def list_tasks(
+        self,
+        case_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            tasks = list(self.tasks.values())
+            if case_id:
+                tasks = [task for task in tasks if task.case_id == case_id]
+            if status:
+                tasks = [task for task in tasks if task.status == status]
+            sorted_tasks = sorted(tasks, key=lambda item: item.updated_at, reverse=True)
+            return [asdict(task) for task in sorted_tasks]
+
+    def update_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if task is None:
+                return None
+            for field_name in (
+                "status",
+                "required_action",
+                "pending_confirmation",
+                "assigned_to",
+                "deadline",
+                "result",
+            ):
+                if field_name in payload and payload[field_name] is not None:
+                    setattr(task, field_name, payload[field_name])
+            task.updated_at = utc_now()
+            case = self.cases.get(task.case_id)
+            if case and payload.get("status") in {"completed", "cancelled"}:
+                case.status = "open"
+                case.current_task_id = None
+                case.updated_at = utc_now()
+            return asdict(task)
+
+    def get_task_by_resume_token(self, resume_token: str) -> dict[str, Any] | None:
+        with self._lock:
+            for task in self.tasks.values():
+                if task.resume_token == resume_token:
+                    return asdict(task)
+            return None
+
+    def append_tool_audit(
+        self,
+        conversation_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        auth_context: dict[str, Any],
+        policy_status: str,
+        success: bool,
+        result: Any = None,
+        error: str | None = None,
+        case_id: str | None = None,
+        task_id: str | None = None,
+        idempotency_key: str | None = None,
+        requires_confirmation: bool = False,
+    ) -> dict[str, Any]:
+        with self._lock:
+            if idempotency_key:
+                for audit in self.tool_audits.values():
+                    if audit.idempotency_key == idempotency_key and audit.tool_name == tool_name:
+                        return asdict(audit)
+            audit = ToolAuditLog(
+                id=f"AUD-{uuid4().hex[:10].upper()}",
+                conversation_id=conversation_id,
+                case_id=case_id,
+                task_id=task_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                auth_context=auth_context,
+                policy_status=policy_status,
+                success=success,
+                result=result,
+                error=error,
+                idempotency_key=idempotency_key,
+                requires_confirmation=requires_confirmation,
+            )
+            self.tool_audits[audit.id] = audit
+            return asdict(audit)
+
+    def list_tool_audits(
+        self,
+        conversation_id: str | None = None,
+        case_id: str | None = None,
+        tool_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            audits = list(self.tool_audits.values())
+            if conversation_id:
+                audits = [audit for audit in audits if audit.conversation_id == conversation_id]
+            if case_id:
+                audits = [audit for audit in audits if audit.case_id == case_id]
+            if tool_name:
+                audits = [audit for audit in audits if audit.tool_name == tool_name]
+            return [
+                asdict(audit)
+                for audit in sorted(audits, key=lambda item: item.created_at, reverse=True)
+            ]
+
+    def find_tool_audit_by_idempotency_key(
+        self,
+        idempotency_key: str,
+        tool_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            for audit in self.tool_audits.values():
+                if audit.idempotency_key == idempotency_key and (
+                    tool_name is None or audit.tool_name == tool_name
+                ):
+                    return asdict(audit)
+            return None

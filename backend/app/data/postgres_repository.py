@@ -76,6 +76,68 @@ class PostgresRepository:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT;
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assignee_name TEXT;
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_deadline TEXT;
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS handoff_reason TEXT NOT NULL DEFAULT '';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS agent_summary TEXT NOT NULL DEFAULT '';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_emotion
+            TEXT NOT NULL DEFAULT 'neutral';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS latest_customer_message
+            TEXT NOT NULL DEFAULT '';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS suggested_reply TEXT NOT NULL DEFAULT '';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS human_reply TEXT NOT NULL DEFAULT '';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution_type TEXT NOT NULL DEFAULT '';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS closed_reason TEXT NOT NULL DEFAULT '';
+        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS csat_score INTEGER;
+        CREATE TABLE IF NOT EXISTS cases (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(user_id),
+            tenant_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            category TEXT NOT NULL,
+            status TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            source_channel TEXT NOT NULL,
+            related_order_id TEXT,
+            related_ticket_id TEXT,
+            current_task_id TEXT,
+            resolution TEXT NOT NULL DEFAULT '',
+            risk_level TEXT NOT NULL DEFAULT 'low',
+            summary TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS case_tasks (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases(id),
+            type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            required_action TEXT NOT NULL,
+            pending_confirmation JSONB,
+            assigned_to TEXT,
+            deadline TEXT,
+            result JSONB,
+            resume_token TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS tool_audits (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            case_id TEXT,
+            task_id TEXT,
+            tool_name TEXT NOT NULL,
+            arguments JSONB NOT NULL,
+            auth_context JSONB NOT NULL,
+            policy_status TEXT NOT NULL,
+            success BOOLEAN NOT NULL,
+            result JSONB,
+            error TEXT,
+            idempotency_key TEXT,
+            requires_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS conversations (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL REFERENCES users(user_id),
@@ -324,6 +386,27 @@ class PostgresRepository:
                 """,
                 (conversation_id,),
             ).fetchall()
+            cases = conn.execute(
+                """
+                SELECT *
+                FROM cases
+                WHERE conversation_id = %s
+                ORDER BY updated_at DESC
+                """,
+                (conversation_id,),
+            ).fetchall()
+            case_ids = [row["id"] for row in cases]
+            tasks = []
+            if case_ids:
+                tasks = conn.execute(
+                    """
+                    SELECT *
+                    FROM case_tasks
+                    WHERE case_id = ANY(%s)
+                    ORDER BY updated_at DESC
+                    """,
+                    (case_ids,),
+                ).fetchall()
         return {
             "id": record["id"],
             "user_id": record["user_id"],
@@ -332,6 +415,8 @@ class PostgresRepository:
             "agent_steps": [dict(row) for row in reversed(steps)],
             "tool_calls": [dict(row) for row in reversed(tool_calls)],
             "trace_ids": [row["trace_id"] for row in traces],
+            "cases": [dict(row) for row in cases],
+            "tasks": [dict(row) for row in tasks],
             "updated_at": record["updated_at"],
         }
 
@@ -437,6 +522,18 @@ class PostgresRepository:
         description: str,
         priority: str = "medium",
         category: str = "general",
+        assigned_to: str | None = None,
+        assignee_name: str | None = None,
+        sla_deadline: str | None = None,
+        handoff_reason: str = "",
+        agent_summary: str = "",
+        customer_emotion: str = "neutral",
+        latest_customer_message: str = "",
+        suggested_reply: str = "",
+        human_reply: str = "",
+        resolution_type: str = "",
+        closed_reason: str = "",
+        csat_score: int | None = None,
     ) -> dict[str, Any]:
         ticket = Ticket(
             id=f"TK-{uuid4().hex[:8].upper()}",
@@ -445,15 +542,33 @@ class PostgresRepository:
             description=description,
             priority=priority,
             category=category,
+            assigned_to=assigned_to,
+            assignee_name=assignee_name,
+            sla_deadline=sla_deadline,
+            handoff_reason=handoff_reason,
+            agent_summary=agent_summary,
+            customer_emotion=customer_emotion,
+            latest_customer_message=latest_customer_message,
+            suggested_reply=suggested_reply,
+            human_reply=human_reply,
+            resolution_type=resolution_type,
+            closed_reason=closed_reason,
+            csat_score=csat_score,
         )
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO tickets (
                     id, user_id, title, description, priority, category,
-                    status, created_at, updated_at
+                    status, assigned_to, assignee_name, sla_deadline, handoff_reason,
+                    agent_summary, customer_emotion, latest_customer_message,
+                    suggested_reply, human_reply, resolution_type, closed_reason,
+                    csat_score, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s
+                )
                 """,
                 (
                     ticket.id,
@@ -463,6 +578,18 @@ class PostgresRepository:
                     ticket.priority,
                     ticket.category,
                     ticket.status,
+                    ticket.assigned_to,
+                    ticket.assignee_name,
+                    ticket.sla_deadline,
+                    ticket.handoff_reason,
+                    ticket.agent_summary,
+                    ticket.customer_emotion,
+                    ticket.latest_customer_message,
+                    ticket.suggested_reply,
+                    ticket.human_reply,
+                    ticket.resolution_type,
+                    ticket.closed_reason,
+                    ticket.csat_score,
                     ticket.created_at,
                     ticket.updated_at,
                 ),
@@ -479,7 +606,25 @@ class PostgresRepository:
     def update_ticket(self, ticket_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         fields = [
             field_name
-            for field_name in ("status", "priority", "category", "title", "description")
+            for field_name in (
+                "status",
+                "priority",
+                "category",
+                "title",
+                "description",
+                "assigned_to",
+                "assignee_name",
+                "sla_deadline",
+                "handoff_reason",
+                "agent_summary",
+                "customer_emotion",
+                "latest_customer_message",
+                "suggested_reply",
+                "human_reply",
+                "resolution_type",
+                "closed_reason",
+                "csat_score",
+            )
             if payload.get(field_name) is not None
         ]
         if not fields:
@@ -496,6 +641,382 @@ class PostgresRepository:
                 SET {assignments}, updated_at = %s
                 WHERE id = %s
                 RETURNING *
+                """,
+                values,
+            ).fetchone()
+        return dict(row) if row else None
+
+    def create_or_get_case(
+        self,
+        user_id: str,
+        tenant_id: str,
+        conversation_id: str,
+        category: str,
+        priority: str = "medium",
+        source_channel: str = "web",
+        related_order_id: str | None = None,
+        summary: str = "",
+        risk_level: str = "low",
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT *
+                FROM cases
+                WHERE conversation_id = %s AND status NOT IN ('resolved', 'closed')
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+            if existing:
+                row = conn.execute(
+                    """
+                    UPDATE cases
+                    SET category = %s,
+                        related_order_id = COALESCE(%s, related_order_id),
+                        summary = CASE WHEN %s = '' THEN summary ELSE %s END,
+                        risk_level = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (
+                        category,
+                        related_order_id,
+                        summary,
+                        summary,
+                        risk_level,
+                        utc_now(),
+                        existing["id"],
+                    ),
+                ).fetchone()
+                return dict(row)
+            now = utc_now()
+            case_id = f"CASE-{uuid4().hex[:8].upper()}"
+            row = conn.execute(
+                """
+                INSERT INTO cases (
+                    id, user_id, tenant_id, conversation_id, category, status, priority,
+                    source_channel, related_order_id, risk_level, summary, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    case_id,
+                    user_id,
+                    tenant_id,
+                    conversation_id,
+                    category,
+                    priority,
+                    source_channel,
+                    related_order_id,
+                    risk_level,
+                    summary,
+                    now,
+                    now,
+                ),
+            ).fetchone()
+        return dict(row)
+
+    def list_cases(
+        self,
+        user_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if user_id:
+            clauses.append("user_id = %s")
+            values.append(user_id)
+        if status:
+            clauses.append("status = %s")
+            values.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM cases {where} ORDER BY updated_at DESC",
+                values,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_case(self, case_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM cases WHERE id = %s", (case_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_case(self, case_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        fields = [
+            field_name
+            for field_name in (
+                "status",
+                "priority",
+                "category",
+                "related_order_id",
+                "related_ticket_id",
+                "current_task_id",
+                "resolution",
+                "risk_level",
+                "summary",
+            )
+            if payload.get(field_name) is not None
+        ]
+        if not fields:
+            return self.get_case(case_id)
+        assignments = ", ".join(f"{field_name} = %s" for field_name in fields)
+        values = [payload[field_name] for field_name in fields]
+        values.extend([utc_now(), case_id])
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                UPDATE cases
+                SET {assignments}, updated_at = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                values,
+            ).fetchone()
+        return dict(row) if row else None
+
+    def close_case(self, case_id: str, resolution: str) -> dict[str, Any] | None:
+        return self.update_case(case_id, {"status": "resolved", "resolution": resolution})
+
+    def create_task(
+        self,
+        case_id: str,
+        task_type: str,
+        required_action: str,
+        pending_confirmation: dict[str, Any] | None = None,
+        status: str = "pending",
+        assigned_to: str | None = None,
+        deadline: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        task_id = f"TASK-{uuid4().hex[:8].upper()}"
+        resume_token = uuid4().hex
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO case_tasks (
+                    id, case_id, type, status, required_action, pending_confirmation,
+                    assigned_to, deadline, result, resume_token, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    task_id,
+                    case_id,
+                    task_type,
+                    status,
+                    required_action,
+                    Jsonb(pending_confirmation) if pending_confirmation is not None else None,
+                    assigned_to,
+                    deadline,
+                    Jsonb(result) if result is not None else None,
+                    resume_token,
+                    now,
+                    now,
+                ),
+            ).fetchone()
+            conn.execute(
+                """
+                UPDATE cases
+                SET current_task_id = %s,
+                    status = CASE WHEN %s THEN 'waiting_customer' ELSE status END,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    task_id,
+                    pending_confirmation is not None,
+                    now,
+                    case_id,
+                ),
+            )
+        return dict(row)
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM case_tasks WHERE id = %s", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_tasks(
+        self,
+        case_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if case_id:
+            clauses.append("case_id = %s")
+            values.append(case_id)
+        if status:
+            clauses.append("status = %s")
+            values.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM case_tasks {where} ORDER BY updated_at DESC",
+                values,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        fields = [
+            field_name
+            for field_name in (
+                "status",
+                "required_action",
+                "pending_confirmation",
+                "assigned_to",
+                "deadline",
+                "result",
+            )
+            if payload.get(field_name) is not None
+        ]
+        if not fields:
+            return self.get_task(task_id)
+        assignments = ", ".join(f"{field_name} = %s" for field_name in fields)
+        values = [
+            Jsonb(payload[field_name])
+            if field_name in {"pending_confirmation", "result"}
+            else payload[field_name]
+            for field_name in fields
+        ]
+        values.extend([utc_now(), task_id])
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                UPDATE case_tasks
+                SET {assignments}, updated_at = %s
+                WHERE id = %s
+                RETURNING *
+                """,
+                values,
+            ).fetchone()
+            if row and payload.get("status") in {"completed", "cancelled"}:
+                conn.execute(
+                    """
+                    UPDATE cases
+                    SET status = 'open', current_task_id = NULL, updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (utc_now(), row["case_id"]),
+                )
+        return dict(row) if row else None
+
+    def get_task_by_resume_token(self, resume_token: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM case_tasks WHERE resume_token = %s",
+                (resume_token,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def append_tool_audit(
+        self,
+        conversation_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        auth_context: dict[str, Any],
+        policy_status: str,
+        success: bool,
+        result: Any = None,
+        error: str | None = None,
+        case_id: str | None = None,
+        task_id: str | None = None,
+        idempotency_key: str | None = None,
+        requires_confirmation: bool = False,
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            if idempotency_key:
+                existing = conn.execute(
+                    """
+                    SELECT * FROM tool_audits
+                    WHERE idempotency_key = %s AND tool_name = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (idempotency_key, tool_name),
+                ).fetchone()
+                if existing:
+                    return dict(existing)
+            audit_id = f"AUD-{uuid4().hex[:10].upper()}"
+            row = conn.execute(
+                """
+                INSERT INTO tool_audits (
+                    id, conversation_id, case_id, task_id, tool_name, arguments,
+                    auth_context, policy_status, success, result, error,
+                    idempotency_key, requires_confirmation, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    audit_id,
+                    conversation_id,
+                    case_id,
+                    task_id,
+                    tool_name,
+                    Jsonb(arguments),
+                    Jsonb(auth_context),
+                    policy_status,
+                    success,
+                    Jsonb(result),
+                    error,
+                    idempotency_key,
+                    requires_confirmation,
+                    utc_now(),
+                ),
+            ).fetchone()
+        return dict(row)
+
+    def list_tool_audits(
+        self,
+        conversation_id: str | None = None,
+        case_id: str | None = None,
+        tool_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if conversation_id:
+            clauses.append("conversation_id = %s")
+            values.append(conversation_id)
+        if case_id:
+            clauses.append("case_id = %s")
+            values.append(case_id)
+        if tool_name:
+            clauses.append("tool_name = %s")
+            values.append(tool_name)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM tool_audits {where} ORDER BY created_at DESC",
+                values,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_tool_audit_by_idempotency_key(
+        self,
+        idempotency_key: str,
+        tool_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        clauses = ["idempotency_key = %s"]
+        values: list[Any] = [idempotency_key]
+        if tool_name:
+            clauses.append("tool_name = %s")
+            values.append(tool_name)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT *
+                FROM tool_audits
+                WHERE {' AND '.join(clauses)}
+                ORDER BY created_at DESC
+                LIMIT 1
                 """,
                 values,
             ).fetchone()

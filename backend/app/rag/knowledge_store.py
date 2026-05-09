@@ -6,6 +6,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from app.models.schemas import KnowledgeDoc
+from app.rag.grounding import annotate_grounding
+from app.rag.reranker import rerank_documents
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]+|[\u4e00-\u9fff]")
 
@@ -107,7 +109,7 @@ class HybridKnowledgeStore:
                 copied.score = round(score, 4)
                 scored.append(copied)
         scored.sort(key=lambda doc: doc.score, reverse=True)
-        return scored[:top_k]
+        return annotate_grounding(query, rerank_documents(query, scored))[:top_k]
 
     def all_documents(self) -> list[KnowledgeDoc]:
         return list(self._docs.values())

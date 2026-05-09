@@ -14,6 +14,8 @@ def extract_order_id(message: str) -> str | None:
 
 def classify_intent(message: str) -> Intent:
     text = message.lower()
+    if any(word in message for word in ("朋友", "别人", "他人", "收货地址", "隐私")):
+        return "privacy"
     if any(word in message for word in ("人工", "投诉", "客服介入", "转人工", "工单")):
         return "handoff"
     if any(word in message for word in ("发票", "开票", "票据", "invoice")):

@@ -5,8 +5,20 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-Intent = Literal["faq", "order", "refund", "invoice", "ticket", "handoff", "unknown"]
-SSEEventType = Literal["agent_step", "tool_call", "citation", "token", "final", "error"]
+Intent = Literal["faq", "order", "refund", "invoice", "ticket", "handoff", "privacy", "unknown"]
+SSEEventType = Literal[
+    "agent_step",
+    "tool_call",
+    "citation",
+    "token",
+    "final",
+    "error",
+    "case_update",
+    "task_update",
+    "checkpoint",
+    "audit",
+    "action_required",
+]
 
 
 def utc_now() -> str:
@@ -29,6 +41,9 @@ class KnowledgeDoc:
     category: str
     tags: list[str] = field(default_factory=list)
     score: float = 0.0
+    version: int = 1
+    status: str = "published"
+    grounding_score: float = 0.0
 
 
 @dataclass
@@ -39,6 +54,10 @@ class ToolCallRecord:
     result: Any = None
     error: str | None = None
     duration_ms: float = 0.0
+    audit_id: str | None = None
+    policy_status: str = "unchecked"
+    idempotency_key: str | None = None
+    requires_confirmation: bool = False
 
 
 @dataclass
@@ -63,6 +82,7 @@ class AgentStep:
 class AgentState:
     messages: list[ChatMessage]
     user_profile: dict[str, Any]
+    auth_context: dict[str, Any] = field(default_factory=dict)
     intent: Intent = "unknown"
     retrieved_docs: list[KnowledgeDoc] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
@@ -71,6 +91,13 @@ class AgentState:
     final_answer: str = ""
     trace_id: str = field(default_factory=lambda: uuid4().hex)
     conversation_id: str = field(default_factory=lambda: uuid4().hex)
+    case_id: str | None = None
+    task_id: str | None = None
+    action_required: str | None = None
+    pending_confirmation: dict[str, Any] | None = None
+    resume_token: str | None = None
+    checkpoint_id: str = field(default_factory=lambda: uuid4().hex)
+    graph_path: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -78,4 +105,3 @@ class AgentState:
 class StreamEvent:
     event: SSEEventType
     data: dict[str, Any]
-

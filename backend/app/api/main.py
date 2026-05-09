@@ -5,13 +5,14 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, cast
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agents.langgraph_workflow import build_langgraph_metadata
 from app.agents.orchestrator import AgentOrchestrator
+from app.auth.context import build_dev_auth_context
 from app.core.config import settings
 from app.core.observability import configure_observability
 from app.core.services import create_knowledge_store, create_repository, create_runtime_service
@@ -49,6 +50,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     user_id: str = "u_1001"
     conversation_id: str | None = None
+    resume_token: str | None = None
 
 
 class TicketPatchRequest(BaseModel):
@@ -57,6 +59,38 @@ class TicketPatchRequest(BaseModel):
     category: str | None = None
     title: str | None = None
     description: str | None = None
+    assigned_to: str | None = None
+    assignee_name: str | None = None
+    sla_deadline: str | None = None
+    handoff_reason: str | None = None
+    agent_summary: str | None = None
+    customer_emotion: str | None = None
+    latest_customer_message: str | None = None
+    suggested_reply: str | None = None
+    human_reply: str | None = None
+    resolution_type: str | None = None
+    closed_reason: str | None = None
+    csat_score: int | None = None
+
+
+class CasePatchRequest(BaseModel):
+    status: str | None = None
+    priority: str | None = None
+    category: str | None = None
+    related_order_id: str | None = None
+    related_ticket_id: str | None = None
+    current_task_id: str | None = None
+    resolution: str | None = None
+    risk_level: str | None = None
+    summary: str | None = None
+
+
+class TaskDecisionRequest(BaseModel):
+    approved: bool = True
+
+
+class HandoffRequest(BaseModel):
+    reason: str = "人工坐席接管"
 
 
 class KBIngestRequest(BaseModel):
@@ -115,12 +149,31 @@ def build_harness_manifest() -> dict[str, Any]:
             "final_answer",
             "trace_id",
             "conversation_id",
+            "case_id",
+            "task_id",
+            "action_required",
+            "pending_confirmation",
+            "resume_token",
         ],
         "event_contract": {
-            "stream": ["agent_step", "tool_call", "citation", "token", "final", "error"],
+            "stream": [
+                "agent_step",
+                "case_update",
+                "task_update",
+                "tool_call",
+                "audit",
+                "action_required",
+                "citation",
+                "checkpoint",
+                "token",
+                "final",
+                "error",
+            ],
             "trace_required_fields": [
                 "trace_id",
                 "agent_path",
+                "case_id",
+                "task_id",
                 "tool_calls",
                 "retrieved_docs",
                 "latency_ms",
@@ -151,11 +204,14 @@ def build_harness_manifest() -> dict[str, Any]:
                 ),
                 "evidence": [
                     "router",
-                    "rag_answer",
-                    "order_refund",
-                    "ticket_escalation",
+                    "input_policy",
+                    "case_binding",
+                    "retrieve_policy",
+                    "tool_policy",
+                    "human_confirm",
+                    "human_handoff",
                     "guardrail",
-                    "answer_composer",
+                    "compose_answer",
                     "memory_writer",
                 ],
             },
@@ -181,9 +237,13 @@ def build_harness_manifest() -> dict[str, Any]:
         "release_gates": {
             "intent_accuracy": 0.90,
             "tool_accuracy": 0.90,
+            "tool_argument_accuracy": 0.90,
             "citation_hit_rate": 0.85,
+            "groundedness": 0.80,
             "pii_leakage_rate": 0.0,
             "unsafe_block_rate": 1.0,
+            "handoff_precision": 0.85,
+            "task_success_rate": 0.85,
             "first_token_p95_ms": 1500,
             "end_to_end_p95_ms": 6000,
         },
@@ -199,8 +259,19 @@ def build_harness_manifest() -> dict[str, Any]:
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
-    rate_limit = runtime_service.check_rate_limit(request.user_id)
+async def chat_stream(
+    request: ChatRequest,
+    x_smartcs_user: str | None = Header(default=None),
+    x_smartcs_tenant: str | None = Header(default=None),
+    x_smartcs_roles: str | None = Header(default=None),
+):
+    auth_context = build_dev_auth_context(
+        header_user_id=x_smartcs_user,
+        fallback_user_id=request.user_id,
+        tenant_id=x_smartcs_tenant,
+        roles_header=x_smartcs_roles,
+    )
+    rate_limit = runtime_service.check_rate_limit(auth_context.user_id)
     if not rate_limit.allowed:
         raise HTTPException(
             status_code=429,
@@ -212,11 +283,12 @@ async def chat_stream(request: ChatRequest):
 
     async def generator():
         assistant_answer = ""
-        stream_key = request.conversation_id or f"pending:{request.user_id}"
+        stream_key = request.conversation_id or f"pending:{auth_context.user_id}"
         async for event in orchestrator.run_stream(
             message=request.message,
-            user_id=request.user_id,
+            user_id=auth_context.user_id,
             conversation_id=request.conversation_id,
+            auth_context=auth_context,
         ):
             payload = to_jsonable(event.data)
             conversation_key = payload.get("conversation_id") or stream_key
@@ -230,6 +302,118 @@ async def chat_stream(request: ChatRequest):
             yield sse(event.event, event.data)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
+
+
+@app.get("/api/cases")
+async def list_cases(user_id: str | None = None, status: str | None = None):
+    return {"cases": repository.list_cases(user_id=user_id, status=status)}
+
+
+@app.get("/api/cases/{case_id}")
+async def get_case(case_id: str):
+    case = repository.get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return {
+        "case": case,
+        "tasks": repository.list_tasks(case_id=case_id),
+        "audits": repository.list_tool_audits(case_id=case_id),
+    }
+
+
+@app.patch("/api/cases/{case_id}")
+async def update_case(case_id: str, request: CasePatchRequest):
+    case = repository.update_case(case_id, request.model_dump(exclude_unset=True))
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@app.post("/api/cases/{case_id}/handoff")
+async def handoff_case(
+    case_id: str,
+    request: HandoffRequest,
+    x_smartcs_user: str | None = Header(default=None),
+    x_smartcs_tenant: str | None = Header(default=None),
+    x_smartcs_roles: str | None = Header(default="agent"),
+):
+    case = repository.get_case(case_id)
+    fallback_user = case["user_id"] if case else "anonymous"
+    auth_context = build_dev_auth_context(
+        x_smartcs_user,
+        fallback_user_id=fallback_user,
+        tenant_id=x_smartcs_tenant,
+        roles_header=x_smartcs_roles,
+    )
+    try:
+        return await orchestrator.handoff_case(case_id, auth_context, reason=request.reason)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/tasks")
+async def list_tasks(case_id: str | None = None, status: str | None = None):
+    return {"tasks": repository.list_tasks(case_id=case_id, status=status)}
+
+
+@app.post("/api/tasks/{task_id}/confirm")
+async def confirm_task(
+    task_id: str,
+    request: TaskDecisionRequest,
+    x_smartcs_user: str | None = Header(default=None),
+    x_smartcs_tenant: str | None = Header(default=None),
+    x_smartcs_roles: str | None = Header(default=None),
+):
+    task = repository.get_task(task_id)
+    case = repository.get_case(task["case_id"]) if task else None
+    fallback_user = case["user_id"] if case else "anonymous"
+    auth_context = build_dev_auth_context(
+        x_smartcs_user,
+        fallback_user_id=fallback_user,
+        tenant_id=x_smartcs_tenant,
+        roles_header=x_smartcs_roles,
+    )
+    try:
+        return await orchestrator.confirm_task(task_id, auth_context, approved=request.approved)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(
+    task_id: str,
+    x_smartcs_user: str | None = Header(default=None),
+    x_smartcs_tenant: str | None = Header(default=None),
+    x_smartcs_roles: str | None = Header(default=None),
+):
+    task = repository.get_task(task_id)
+    case = repository.get_case(task["case_id"]) if task else None
+    fallback_user = case["user_id"] if case else "anonymous"
+    auth_context = build_dev_auth_context(
+        x_smartcs_user,
+        fallback_user_id=fallback_user,
+        tenant_id=x_smartcs_tenant,
+        roles_header=x_smartcs_roles,
+    )
+    try:
+        return await orchestrator.confirm_task(task_id, auth_context, approved=False)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/tool-audits")
+async def list_tool_audits(
+    conversation_id: str | None = None,
+    case_id: str | None = None,
+    tool_name: str | None = None,
+):
+    return {
+        "audits": repository.list_tool_audits(
+            conversation_id=conversation_id,
+            case_id=case_id,
+            tool_name=tool_name,
+        )
+    }
 
 
 @app.get("/api/conversations/{conversation_id}")
