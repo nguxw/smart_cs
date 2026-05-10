@@ -50,10 +50,25 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
       fetchJson<ConversationSnapshot>(`${API_BASE}/api/conversations/${nextConversationId}`),
       fetchJson<StreamState>(`${API_BASE}/api/conversations/${nextConversationId}/stream-state`)
     ]);
+    const latestCase = [...(snapshot.cases ?? [])].sort((left, right) =>
+      right.updated_at.localeCompare(left.updated_at)
+    )[0] ?? null;
+    const latestTask = [...(snapshot.tasks ?? [])].sort((left, right) =>
+      right.updated_at.localeCompare(left.updated_at)
+    )[0] ?? null;
     setConversationSnapshot(snapshot);
     setStreamState(state);
-    setCurrentCase(snapshot.cases?.[0] ?? null);
-    setCurrentTask(snapshot.tasks?.[0] ?? null);
+    setMessages(
+      snapshot.messages
+        .filter((message): message is ChatMessage =>
+          message.role === "user" || message.role === "assistant"
+        )
+        .map((message) => ({ role: message.role, content: message.content }))
+    );
+    setAgentSteps(snapshot.agent_steps ?? []);
+    setToolCalls(snapshot.tool_calls ?? []);
+    setCurrentCase(latestCase);
+    setCurrentTask(latestTask);
   }, []);
 
   const send = useCallback(
@@ -114,14 +129,23 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
       const taskId = currentTask?.id ?? pendingConfirmation?.task_id;
       if (!taskId) return null;
       const response = await confirmTask(taskId, userId, approved);
+      const nextConversationId = conversationId ?? currentCase?.conversation_id ?? null;
       await Promise.all([
-        conversationId ? loadConversation(conversationId) : Promise.resolve(),
+        nextConversationId ? loadConversation(nextConversationId) : Promise.resolve(),
         onAfterMutation?.() ?? Promise.resolve()
       ]);
       setPendingConfirmation(null);
       return response;
     },
-    [conversationId, currentTask, loadConversation, onAfterMutation, pendingConfirmation, userId]
+    [
+      conversationId,
+      currentCase?.conversation_id,
+      currentTask,
+      loadConversation,
+      onAfterMutation,
+      pendingConfirmation,
+      userId
+    ]
   );
 
   const reset = useCallback(() => {

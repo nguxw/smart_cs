@@ -93,7 +93,7 @@ export function TicketsPage({
             </span>
             <div>
               <h2>坐席队列</h2>
-              <p>{filtered.length} 条结果，按 SLA、优先级和处理人筛选。</p>
+              <p>{filtered.length} 条结果，保存人工回复后会回写关联会话。</p>
             </div>
           </div>
           <button className="icon-button" type="button" aria-label="刷新工单" onClick={onRefresh}>
@@ -126,8 +126,8 @@ export function TicketsPage({
 
       <Card className="ticket-workbench">
         {selectedTicket ? (
-          <form onSubmit={save}>
-            <div className="detail-head">
+          <form className="operation-form ticket-editor" onSubmit={save}>
+            <div className="detail-head workbench-head">
               <div>
                 <span>处理台</span>
                 <h2>{selectedTicket.id}</h2>
@@ -136,7 +136,7 @@ export function TicketsPage({
                 SLA {selectedTicket.sla_deadline ?? "未设置"}
               </Badge>
             </div>
-            <div className="decision-row">
+            <div className="decision-row action-toolbar">
               <Button onClick={() => void quickPatch({ assigned_to: "agent-demo", assignee_name: "Demo Agent" })}>
                 <UserRound size={17} />
                 接单
@@ -149,31 +149,35 @@ export function TicketsPage({
                 关闭
               </Button>
             </div>
-            <label>
-              标题
-              <input value={draft.title ?? ""} onChange={(event) => setDraft((item) => ({ ...item, title: event.target.value }))} />
-            </label>
-            <div className="form-grid">
-              <Select label="状态" value={draft.status ?? "open"} values={STATUS_OPTIONS} onChange={(value) => setDraft((item) => ({ ...item, status: value }))} />
-              <Select label="优先级" value={draft.priority ?? "medium"} values={PRIORITY_OPTIONS} onChange={(value) => setDraft((item) => ({ ...item, priority: value }))} />
-              <Select label="类别" value={draft.category ?? "general"} values={CATEGORY_OPTIONS} onChange={(value) => setDraft((item) => ({ ...item, category: value }))} />
+            <div className="form-section">
               <label>
-                处理人
-                <input value={draft.assignee_name ?? ""} onChange={(event) => setDraft((item) => ({ ...item, assignee_name: event.target.value }))} />
+                <span>标题</span>
+                <input value={draft.title ?? ""} onChange={(event) => setDraft((item) => ({ ...item, title: event.target.value }))} />
+              </label>
+              <div className="form-grid">
+                <Select label="状态" value={draft.status ?? "open"} values={STATUS_OPTIONS} onChange={(value) => setDraft((item) => ({ ...item, status: value }))} />
+                <Select label="优先级" value={draft.priority ?? "medium"} values={PRIORITY_OPTIONS} onChange={(value) => setDraft((item) => ({ ...item, priority: value }))} />
+                <Select label="类别" value={draft.category ?? "general"} values={CATEGORY_OPTIONS} onChange={(value) => setDraft((item) => ({ ...item, category: value }))} />
+                <label>
+                  <span>处理人</span>
+                  <input value={draft.assignee_name ?? ""} onChange={(event) => setDraft((item) => ({ ...item, assignee_name: event.target.value }))} />
+                </label>
+              </div>
+            </div>
+            <div className="form-section">
+              <label>
+                <span>Agent 摘要</span>
+                <textarea value={draft.agent_summary ?? draft.description ?? ""} onChange={(event) => setDraft((item) => ({ ...item, agent_summary: event.target.value }))} />
+              </label>
+              <label>
+                <span>推荐回复 / 人工回复</span>
+                <textarea value={draft.human_reply ?? draft.suggested_reply ?? ""} onChange={(event) => setDraft((item) => ({ ...item, human_reply: event.target.value }))} />
               </label>
             </div>
-            <label>
-              Agent 摘要
-              <textarea value={draft.agent_summary ?? draft.description ?? ""} onChange={(event) => setDraft((item) => ({ ...item, agent_summary: event.target.value }))} />
-            </label>
-            <label>
-              推荐回复 / 人工回复
-              <textarea value={draft.human_reply ?? draft.suggested_reply ?? ""} onChange={(event) => setDraft((item) => ({ ...item, human_reply: event.target.value }))} />
-            </label>
-            <div className="decision-row">
+            <div className="form-footer">
               <Button type="submit" disabled={busy}>
                 <Send size={17} />
-                保存处理
+                保存并回写
               </Button>
             </div>
           </form>
@@ -198,7 +202,7 @@ function Select({
 }) {
   return (
     <label>
-      {label}
+      <span>{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)}>
         {values.map((item) => (
           <option key={item} value={item}>

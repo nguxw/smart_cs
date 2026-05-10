@@ -145,6 +145,9 @@ export type GraphMetadata = {
   interrupt_nodes?: string[];
   checkpoint_fields?: string[];
   langgraph_available?: boolean;
+  execution_mode?: string;
+  langgraph_runtime?: string;
+  langgraph_nodes_bound?: boolean;
 };
 
 export type HarnessPlane = {
@@ -216,7 +219,7 @@ export type StreamFinal = {
   graph_path?: string[];
 };
 
-export type TabKey = "desk" | "tickets" | "kb" | "evals" | "system";
+export type TabKey = "desk" | "cases" | "tickets" | "kb" | "evals" | "system";
 
 export type NavItem = {
   key: TabKey;

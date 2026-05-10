@@ -32,11 +32,11 @@ export function ChatPanel({
   }
 
   return (
-    <section className="chat-pane agent-console" aria-label="客服会话工作台">
+    <section className="chat-pane agent-console" aria-label="客服会话处理台">
       <div className="pane-head">
         <div>
-          <h2>会话与人工回复</h2>
-          <p>坐席默认看业务动作和证据，调试 trace 收起到右侧。</p>
+          <h2>会话处理</h2>
+          <p>先判断客户意图，再把任务、证据和副作用动作挂到同一个 Case。</p>
         </div>
         <div className="head-actions">
           <Button tone="subtle" onClick={onReset}>
@@ -77,7 +77,7 @@ export function ChatPanel({
           <div className="empty-state">
             <Bot size={34} />
             <strong>等待客户问题</strong>
-            <p>系统会创建 Case、判断任务、生成推荐动作，并保留工具审计。</p>
+            <p>系统会创建服务 Case、判断任务、生成推荐动作，并保留工具审计。</p>
           </div>
         )}
         {messages.map((message, index) => (

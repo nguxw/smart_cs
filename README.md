@@ -1,16 +1,17 @@
-# SmartCS Agent Desk
+# SmartCS ResolutionOps Console
 
-SmartCS Agent Desk is a resume-ready full-stack AI customer support project for e-commerce after-sales workflows. It demonstrates a Python/FastAPI multi-agent backend, RAG knowledge search, business tool execution, conversation memory, guardrails, observability, and an evaluation harness, with a React console for live demos.
+SmartCS ResolutionOps Console is a resume-ready full-stack AI customer support project for e-commerce after-sales workflows. It demonstrates a Python/FastAPI agent runtime, service-case tracking, RAG knowledge search, governed business tool execution, conversation memory, guardrails, observability, and an evaluation harness, with a React operations console for live demos.
 
 ## Highlights
 
-- Multi-agent workflow: `router`, `rag_answer`, `order_refund`, `ticket_escalation`, `memory_writer`, `guardrail`, `answer_composer`.
+- Workflow contract: `router`, `input_policy`, `case_binding`, `retrieve_policy`, `tool_policy`, `human_confirm`, `human_handoff`, `guardrail`, `compose_answer`, `memory_writer`.
+- Case operations: service cases, pending customer confirmations, task status, ticket linkage, and tool-audit evidence.
 - Agent Harness: deterministic local evals for intent accuracy, tool selection, citation hit rate, PII leakage, and latency.
 - Tool layer: MCP-style business tools for orders, refunds, invoices, tickets, and human handoff.
 - Data layer: PostgreSQL persists orders, refunds, tickets, conversations, messages, agent steps, and tool traces.
 - Redis: short-term conversation memory, SSE stream state, and per-user rate limiting.
 - Qdrant: vector knowledge retrieval with deterministic local embeddings and metadata filters.
-- Demo-first frontend: chat stream, agent timeline, citations, order/refund side panel, ticket queue, knowledge management, and eval reports.
+- Operations frontend: conversation handling, Case ledger, task/audit drill-down, ticket queue, knowledge management, and eval reports.
 - Runnable without API keys: mock LLM and in-memory stores by default; OpenAI-compatible APIs, PostgreSQL, Redis, and Qdrant are configurable.
 
 ## Quick Start With Conda
@@ -136,4 +137,4 @@ cd frontend
 
 ## Resume Framing
 
-Built a full-stack multi-agent customer support platform for e-commerce after-sales scenarios. The backend uses FastAPI and a LangGraph-style workflow to coordinate routing, RAG retrieval, business tool calls, memory writing, guardrail review, and streaming answer composition. Added an evaluation harness that tracks intent accuracy, tool-call correctness, citation grounding, PII leakage, and latency across synthetic support cases.
+Built a full-stack AI customer support operations console for e-commerce after-sales scenarios. The backend uses FastAPI and an explicit orchestrator sequence, with a LangGraph migration contract exposed as metadata, to coordinate routing, RAG retrieval, governed business tools, human confirmation, guardrail review, memory writing, and streaming answer composition. Added an evaluation harness that tracks intent accuracy, tool-call correctness, citation grounding, PII leakage, and latency across synthetic support cases.

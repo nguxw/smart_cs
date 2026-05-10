@@ -21,10 +21,10 @@ export function Topbar({
   return (
     <header className="topbar">
       <div className="title-block">
-        <p className="eyebrow">Agentic Customer Support</p>
-        <h1>Case-driven 智能客服运营平台</h1>
+        <p className="eyebrow">Resolution Operations Console</p>
+        <h1>售后问题处理控制台</h1>
         <span>
-          业务意图 <b>{latestIntent}</b>
+          当前意图 <b>{latestIntent}</b>
           <span className="dot-separator" />
           {conversationId ? `会话 ${conversationId.slice(0, 8)}` : "新会话"}
           <span className="dot-separator" />
@@ -34,7 +34,7 @@ export function Topbar({
 
       <div className="top-actions">
         <label className="user-select">
-          <span>开发态 AuthContext</span>
+          <span>Demo AuthContext</span>
           <select value={userId} onChange={(event) => onUserChange(event.target.value)}>
             {USERS.map((user) => (
               <option key={user.id} value={user.id}>

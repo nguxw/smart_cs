@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { PanelLeft } from "lucide-react";
 
 import { NAV_ITEMS } from "../router";
 import type { Health, TabKey } from "../../types/api";
@@ -16,11 +16,11 @@ export function Sidebar({
     <aside className="sidebar" aria-label="主导航">
       <div className="brand">
         <div className="brand-mark" aria-hidden="true">
-          <Sparkles size={20} />
+          <PanelLeft size={20} />
         </div>
         <div>
           <strong>SmartCS</strong>
-          <span>CaseOps</span>
+          <span>ResolutionOps</span>
         </div>
       </div>
 

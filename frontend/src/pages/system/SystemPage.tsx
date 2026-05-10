@@ -30,7 +30,7 @@ export function SystemPage({
             </span>
             <div>
               <h2>运行治理</h2>
-              <p>API、DB、Redis、Qdrant、LLM、Agent Graph 与工具审计。</p>
+              <p>API、DB、Redis、Qdrant、LLM、工作流规格与工具审计。</p>
             </div>
           </div>
           <button className="icon-button" type="button" aria-label="刷新系统元数据" onClick={onRefresh}>
@@ -47,7 +47,12 @@ export function SystemPage({
         </div>
       </Card>
 
-      <Card title="真实状态图" icon={<GitBranch />} className="graph-panel">
+      <Card title="工作流规格" icon={<GitBranch />} className="graph-panel">
+        <div className="runtime-strip">
+          <Info label="执行模式" value={graph?.execution_mode ?? "orchestrator_sequence"} />
+          <Info label="LangGraph" value={graph?.langgraph_runtime ?? "metadata_only"} />
+          <Info label="节点绑定" value={graph?.langgraph_nodes_bound ? "bound" : "not bound"} />
+        </div>
         <div className="graph-list">
           {(graph?.nodes ?? []).map((node, index) => (
             <div key={node} className="graph-node">
@@ -81,10 +86,10 @@ export function SystemPage({
       <Card title="观测入口" icon={<Layers3 />} className="observability-panel">
         <div className="interface-list">
           <Route method="GET" path="/api/cases" detail="Case 队列、状态、风险与当前 Task" />
-          <Route method="POST" path="/api/tasks/{id}/confirm" detail="恢复 pending task 并执行副作用工具" />
+          <Route method="POST" path="/api/tasks/{id}/confirm" detail="确认 pending task 并执行副作用工具" />
           <Route method="GET" path="/api/tool-audits" detail="工具策略、幂等、审计与错误查询" />
           <Route method="POST" path="/api/evals/run" detail="Agent Regression 与发布门禁" />
-          <Route method="GET" path="/api/graph" detail="条件分支、interrupt 节点与 checkpoint 字段" />
+          <Route method="GET" path="/api/graph" detail="迁移用图规格、interrupt 节点与 checkpoint 字段" />
         </div>
         <p className="muted">{harness?.definition}</p>
       </Card>

@@ -32,8 +32,8 @@ orchestrator = AgentOrchestrator(repository, knowledge_store, tool_registry, llm
 eval_runs: dict[str, dict[str, Any]] = {}
 
 app = FastAPI(
-    title="SmartCS Agent Desk",
-    description="电商售后多Agent智能客服项目",
+    title="SmartCS ResolutionOps Console",
+    description="电商售后智能客服运营项目",
     version="0.1.0",
 )
 
@@ -50,7 +50,6 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     user_id: str = "u_1001"
     conversation_id: str | None = None
-    resume_token: str | None = None
 
 
 class TicketPatchRequest(BaseModel):
@@ -199,8 +198,9 @@ def build_harness_manifest() -> dict[str, Any]:
                 "id": "execution",
                 "title": "Controlled Execution",
                 "purpose": (
-                    "Run the agent through a bounded graph with typed business tools instead of "
-                    "free-form side effects."
+                    "Run the agent through a bounded orchestrator sequence with typed business "
+                    "tools instead of free-form side effects. The LangGraph shape is currently "
+                    "a migration contract, not the live executor."
                 ),
                 "evidence": [
                     "router",

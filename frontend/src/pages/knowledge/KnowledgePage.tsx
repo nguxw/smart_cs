@@ -94,14 +94,14 @@ export function KnowledgePage({
       </Card>
 
       <Card title="知识导入" icon={<FilePlus2 />} className="knowledge-ingest">
-        <form onSubmit={onIngest}>
+        <form className="operation-form knowledge-editor" onSubmit={onIngest}>
           <label>
-            标题
+            <span>标题</span>
             <input value={form.title} onChange={(event) => setForm((item) => ({ ...item, title: event.target.value }))} />
           </label>
           <div className="form-grid">
             <label>
-              分类
+              <span>分类</span>
               <select value={form.category} onChange={(event) => setForm((item) => ({ ...item, category: event.target.value }))}>
                 {CATEGORY_OPTIONS.map((item) => (
                   <option key={item} value={item}>
@@ -111,21 +111,23 @@ export function KnowledgePage({
               </select>
             </label>
             <label>
-              来源
+              <span>来源</span>
               <input value={form.source} onChange={(event) => setForm((item) => ({ ...item, source: event.target.value }))} />
             </label>
           </div>
           <label>
-            标签
+            <span>标签</span>
             <input value={form.tags} onChange={(event) => setForm((item) => ({ ...item, tags: event.target.value }))} />
           </label>
           <label>
-            内容
+            <span>内容</span>
             <textarea value={form.content} onChange={(event) => setForm((item) => ({ ...item, content: event.target.value }))} />
           </label>
-          <Button type="submit" disabled={busy || !form.title || !form.content}>
-            写入知识库
-          </Button>
+          <div className="form-footer">
+            <Button type="submit" disabled={busy || !form.title || !form.content}>
+              写入知识库
+            </Button>
+          </div>
         </form>
       </Card>
 

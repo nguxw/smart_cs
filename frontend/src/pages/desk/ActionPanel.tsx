@@ -22,7 +22,7 @@ export function ActionPanel({
   const outcome = buildBusinessOutcome(toolCalls);
   const hasPending = Boolean(task?.status === "pending" || pendingConfirmation);
   return (
-    <Card title="推荐动作" icon={<TicketCheck />}>
+    <Card title="处理动作" icon={<TicketCheck />}>
       <div className="action-card">
         <div>
           <span>下一步</span>
@@ -48,7 +48,7 @@ export function ActionPanel({
       <div className="risk-strip">
         <ShieldCheck size={16} />
         <span>
-          高风险工具需经过 ToolPolicy、用户确认、幂等键和 ToolAudit 后才会真正执行。
+          副作用工具必须经过 ToolPolicy、客户确认、幂等键和 ToolAudit 后才会执行。
         </span>
       </div>
     </Card>

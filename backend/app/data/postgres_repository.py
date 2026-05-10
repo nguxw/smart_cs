@@ -17,6 +17,180 @@ def normalize_database_url(database_url: str) -> str:
     return database_url.replace("postgresql+psycopg://", "postgresql://", 1)
 
 
+POSTGRES_SCHEMA_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        user_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        preference TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id),
+        item TEXT NOT NULL,
+        amount DOUBLE PRECISION NOT NULL,
+        status TEXT NOT NULL,
+        paid_at TEXT NOT NULL,
+        delivered_at TEXT,
+        carrier TEXT NOT NULL,
+        tracking_no TEXT NOT NULL,
+        invoice_status TEXT NOT NULL DEFAULT 'not_requested',
+        refund_id TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS refunds (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        user_id TEXT NOT NULL REFERENCES users(user_id),
+        status TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        amount DOUBLE PRECISION NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tickets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id),
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        priority TEXT NOT NULL,
+        category TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assignee_name TEXT",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_deadline TEXT",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS handoff_reason TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS agent_summary TEXT NOT NULL DEFAULT ''",
+    """
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_emotion
+        TEXT NOT NULL DEFAULT 'neutral'
+    """,
+    """
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS latest_customer_message
+        TEXT NOT NULL DEFAULT ''
+    """,
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS suggested_reply TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS human_reply TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution_type TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS closed_reason TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS csat_score INTEGER",
+    """
+    CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id),
+        summary TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS messages (
+        id BIGSERIAL PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS conversation_traces (
+        id BIGSERIAL PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        trace_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_steps (
+        id BIGSERIAL PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        trace_id TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        status TEXT NOT NULL,
+        message TEXT NOT NULL,
+        elapsed_ms DOUBLE PRECISION NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tool_calls (
+        id BIGSERIAL PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        trace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        arguments JSONB NOT NULL,
+        success BOOLEAN NOT NULL,
+        result JSONB,
+        error TEXT,
+        duration_ms DOUBLE PRECISION NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS cases (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id),
+        tenant_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        category TEXT NOT NULL,
+        status TEXT NOT NULL,
+        priority TEXT NOT NULL,
+        source_channel TEXT NOT NULL,
+        related_order_id TEXT,
+        related_ticket_id TEXT,
+        current_task_id TEXT,
+        resolution TEXT NOT NULL DEFAULT '',
+        risk_level TEXT NOT NULL DEFAULT 'low',
+        summary TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS case_tasks (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL REFERENCES cases(id),
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        required_action TEXT NOT NULL,
+        pending_confirmation JSONB,
+        assigned_to TEXT,
+        deadline TEXT,
+        result JSONB,
+        resume_token TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tool_audits (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        case_id TEXT,
+        task_id TEXT,
+        tool_name TEXT NOT NULL,
+        arguments JSONB NOT NULL,
+        auth_context JSONB NOT NULL,
+        policy_status TEXT NOT NULL,
+        success BOOLEAN NOT NULL,
+        result JSONB,
+        error TEXT,
+        idempotency_key TEXT,
+        requires_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TEXT NOT NULL
+    )
+    """,
+]
+
+
 class PostgresRepository:
     """PostgreSQL-backed repository for durable SmartCS business and trace data."""
 
@@ -36,152 +210,9 @@ class PostgresRepository:
         return bool(row and row["ok"] == 1)
 
     def _init_schema(self) -> None:
-        ddl = """
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            tier TEXT NOT NULL,
-            preference TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS orders (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(user_id),
-            item TEXT NOT NULL,
-            amount DOUBLE PRECISION NOT NULL,
-            status TEXT NOT NULL,
-            paid_at TEXT NOT NULL,
-            delivered_at TEXT,
-            carrier TEXT NOT NULL,
-            tracking_no TEXT NOT NULL,
-            invoice_status TEXT NOT NULL DEFAULT 'not_requested',
-            refund_id TEXT
-        );
-        CREATE TABLE IF NOT EXISTS refunds (
-            id TEXT PRIMARY KEY,
-            order_id TEXT NOT NULL REFERENCES orders(id),
-            user_id TEXT NOT NULL REFERENCES users(user_id),
-            status TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            amount DOUBLE PRECISION NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS tickets (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(user_id),
-            title TEXT NOT NULL,
-            description TEXT NOT NULL,
-            priority TEXT NOT NULL,
-            category TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT;
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assignee_name TEXT;
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_deadline TEXT;
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS handoff_reason TEXT NOT NULL DEFAULT '';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS agent_summary TEXT NOT NULL DEFAULT '';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_emotion
-            TEXT NOT NULL DEFAULT 'neutral';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS latest_customer_message
-            TEXT NOT NULL DEFAULT '';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS suggested_reply TEXT NOT NULL DEFAULT '';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS human_reply TEXT NOT NULL DEFAULT '';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution_type TEXT NOT NULL DEFAULT '';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS closed_reason TEXT NOT NULL DEFAULT '';
-        ALTER TABLE tickets ADD COLUMN IF NOT EXISTS csat_score INTEGER;
-        CREATE TABLE IF NOT EXISTS cases (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(user_id),
-            tenant_id TEXT NOT NULL,
-            conversation_id TEXT NOT NULL REFERENCES conversations(id),
-            category TEXT NOT NULL,
-            status TEXT NOT NULL,
-            priority TEXT NOT NULL,
-            source_channel TEXT NOT NULL,
-            related_order_id TEXT,
-            related_ticket_id TEXT,
-            current_task_id TEXT,
-            resolution TEXT NOT NULL DEFAULT '',
-            risk_level TEXT NOT NULL DEFAULT 'low',
-            summary TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS case_tasks (
-            id TEXT PRIMARY KEY,
-            case_id TEXT NOT NULL REFERENCES cases(id),
-            type TEXT NOT NULL,
-            status TEXT NOT NULL,
-            required_action TEXT NOT NULL,
-            pending_confirmation JSONB,
-            assigned_to TEXT,
-            deadline TEXT,
-            result JSONB,
-            resume_token TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS tool_audits (
-            id TEXT PRIMARY KEY,
-            conversation_id TEXT NOT NULL REFERENCES conversations(id),
-            case_id TEXT,
-            task_id TEXT,
-            tool_name TEXT NOT NULL,
-            arguments JSONB NOT NULL,
-            auth_context JSONB NOT NULL,
-            policy_status TEXT NOT NULL,
-            success BOOLEAN NOT NULL,
-            result JSONB,
-            error TEXT,
-            idempotency_key TEXT,
-            requires_confirmation BOOLEAN NOT NULL DEFAULT FALSE,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS conversations (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(user_id),
-            summary TEXT NOT NULL DEFAULT '',
-            updated_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id BIGSERIAL PRIMARY KEY,
-            conversation_id TEXT NOT NULL REFERENCES conversations(id),
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS conversation_traces (
-            id BIGSERIAL PRIMARY KEY,
-            conversation_id TEXT NOT NULL REFERENCES conversations(id),
-            trace_id TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS agent_steps (
-            id BIGSERIAL PRIMARY KEY,
-            conversation_id TEXT NOT NULL REFERENCES conversations(id),
-            trace_id TEXT NOT NULL,
-            agent TEXT NOT NULL,
-            status TEXT NOT NULL,
-            message TEXT NOT NULL,
-            elapsed_ms DOUBLE PRECISION NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS tool_calls (
-            id BIGSERIAL PRIMARY KEY,
-            conversation_id TEXT NOT NULL REFERENCES conversations(id),
-            trace_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            arguments JSONB NOT NULL,
-            success BOOLEAN NOT NULL,
-            result JSONB,
-            error TEXT,
-            duration_ms DOUBLE PRECISION NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        """
         with self._connect() as conn:
-            conn.execute(ddl)
+            for statement in POSTGRES_SCHEMA_DDL:
+                conn.execute(statement)
 
     def _seed(self) -> None:
         with self._connect() as conn:
@@ -604,6 +635,8 @@ class PostgresRepository:
         return [dict(row) for row in rows]
 
     def update_ticket(self, ticket_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        sync_human_reply = "human_reply" in payload and bool(payload.get("human_reply"))
+        close_case = payload.get("status") == "resolved"
         fields = [
             field_name
             for field_name in (
@@ -627,14 +660,15 @@ class PostgresRepository:
             )
             if payload.get(field_name) is not None
         ]
-        if not fields:
-            with self._connect() as conn:
-                row = conn.execute("SELECT * FROM tickets WHERE id = %s", (ticket_id,)).fetchone()
-            return dict(row) if row else None
-        assignments = ", ".join(f"{field_name} = %s" for field_name in fields)
-        values = [payload[field_name] for field_name in fields]
-        values.extend([utc_now(), ticket_id])
         with self._connect() as conn:
+            previous = conn.execute("SELECT * FROM tickets WHERE id = %s", (ticket_id,)).fetchone()
+            if previous is None:
+                return None
+            if not fields:
+                return dict(previous)
+            assignments = ", ".join(f"{field_name} = %s" for field_name in fields)
+            values = [payload[field_name] for field_name in fields]
+            values.extend([utc_now(), ticket_id])
             row = conn.execute(
                 f"""
                 UPDATE tickets
@@ -644,6 +678,51 @@ class PostgresRepository:
                 """,
                 values,
             ).fetchone()
+            if row is None:
+                return None
+            if sync_human_reply and payload.get("human_reply") != previous.get("human_reply"):
+                linked_cases = conn.execute(
+                    "SELECT id, conversation_id FROM cases WHERE related_ticket_id = %s",
+                    (ticket_id,),
+                ).fetchall()
+                for case in linked_cases:
+                    now = utc_now()
+                    conn.execute(
+                        """
+                        INSERT INTO messages (conversation_id, role, content, created_at)
+                        VALUES (%s, 'assistant', %s, %s)
+                        """,
+                        (case["conversation_id"], payload["human_reply"], now),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE conversations SET updated_at = %s WHERE id = %s
+                        """,
+                        (now, case["conversation_id"]),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE cases
+                        SET summary = %s, updated_at = %s
+                        WHERE id = %s
+                        """,
+                        (str(payload["human_reply"])[:180], now, case["id"]),
+                    )
+            if close_case:
+                resolution = (
+                    payload.get("closed_reason")
+                    or payload.get("resolution_type")
+                    or payload.get("human_reply")
+                    or "工单已关闭"
+                )
+                conn.execute(
+                    """
+                    UPDATE cases
+                    SET status = 'resolved', resolution = %s, updated_at = %s
+                    WHERE related_ticket_id = %s
+                    """,
+                    (resolution, utc_now(), ticket_id),
+                )
         return dict(row) if row else None
 
     def create_or_get_case(

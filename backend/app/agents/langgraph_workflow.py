@@ -12,7 +12,13 @@ class SmartCSGraphState(TypedDict, total=False):
 
 
 def build_langgraph_metadata() -> dict[str, Any]:
-    """Expose the executable SmartCS state graph used by the orchestrator."""
+    """Expose the SmartCS workflow contract used by the current orchestrator.
+
+    The production path is still driven by AgentOrchestrator. This metadata is
+    intentionally explicit so the future LangGraph migration has a testable
+    node, edge, interrupt, and checkpoint contract without claiming that the
+    installed runtime is already executing real LangGraph nodes.
+    """
 
     nodes = [
         "router",
@@ -46,37 +52,16 @@ def build_langgraph_metadata() -> dict[str, Any]:
         "edges": edges,
         "interrupt_nodes": ["human_confirm"],
         "checkpoint_fields": ["conversation_id", "case_id", "task_id", "resume_token"],
+        "execution_mode": "orchestrator_sequence",
         "langgraph_available": False,
+        "langgraph_runtime": "metadata_only",
+        "langgraph_nodes_bound": False,
     }
     try:
-        from langgraph.graph import END, StateGraph
+        import langgraph  # noqa: F401
 
-        graph = StateGraph(SmartCSGraphState)
-        for node in nodes:
-            graph.add_node(node, lambda state: state)
-        graph.set_entry_point("router")
-        graph.add_edge("router", "input_policy")
-        graph.add_edge("input_policy", "case_binding")
-        graph.add_conditional_edges(
-            "case_binding",
-            lambda state: "human_handoff" if state.get("input_blocked") else "retrieve_policy",
-        )
-        graph.add_edge("retrieve_policy", "tool_policy")
-        graph.add_conditional_edges(
-            "tool_policy",
-            lambda state: "human_confirm"
-            if state.get("action_required") == "customer_confirmation"
-            else "human_handoff"
-            if state.get("needs_handoff")
-            else "guardrail",
-        )
-        graph.add_edge("human_confirm", "guardrail")
-        graph.add_edge("human_handoff", "guardrail")
-        graph.add_edge("guardrail", "compose_answer")
-        graph.add_edge("compose_answer", "memory_writer")
-        graph.add_edge("memory_writer", END)
         metadata["langgraph_available"] = True
-        metadata["graph"] = graph
     except Exception:
-        metadata["graph"] = None
+        pass
+    metadata["graph"] = None
     return metadata

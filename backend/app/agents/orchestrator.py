@@ -30,7 +30,7 @@ def _event(event: str, **data: Any) -> StreamEvent:
 
 
 class AgentOrchestrator:
-    """Case-driven SmartCS agent runtime with checkpoints and human confirmation."""
+    """Resolution-oriented SmartCS runtime with case tasks and human confirmation."""
 
     def __init__(
         self,

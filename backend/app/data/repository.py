@@ -340,6 +340,7 @@ class DemoRepository:
             ticket = self.tickets.get(ticket_id)
             if ticket is None:
                 return None
+            previous_human_reply = ticket.human_reply
             for field_name in (
                 "status",
                 "priority",
@@ -362,6 +363,25 @@ class DemoRepository:
                 if field_name in payload and payload[field_name] is not None:
                     setattr(ticket, field_name, payload[field_name])
             ticket.updated_at = utc_now()
+            linked_cases = [
+                case for case in self.cases.values() if case.related_ticket_id == ticket_id
+            ]
+            if ticket.human_reply and ticket.human_reply != previous_human_reply:
+                for case in linked_cases:
+                    record = self.conversations.get(case.conversation_id)
+                    if record:
+                        record.messages.append(
+                            ChatMessage(role="assistant", content=ticket.human_reply)
+                        )
+                        record.updated_at = utc_now()
+                    case.summary = ticket.human_reply[:180]
+                    case.updated_at = utc_now()
+            if ticket.status == "resolved":
+                resolution = ticket.closed_reason or ticket.resolution_type or ticket.human_reply
+                for case in linked_cases:
+                    case.status = "resolved"
+                    case.resolution = resolution or "工单已关闭"
+                    case.updated_at = utc_now()
             return asdict(ticket)
 
     def create_or_get_case(

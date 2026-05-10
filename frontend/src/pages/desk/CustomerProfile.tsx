@@ -16,15 +16,20 @@ export function CustomerProfile({
   const user = USERS.find((item) => item.id === userId) ?? USERS[0];
   return (
     <>
-      <Card title="客户上下文" icon={<UserRound />}>
-        <div className="profile-stack">
-          <strong>{user.name}</strong>
-          <span>{user.id} / {user.tier}</span>
+      <Card title="客户上下文" icon={<UserRound />} className="customer-context-panel">
+        <div className="profile-header">
+          <div className="profile-avatar">{user.name.slice(0, 1)}</div>
+          <div className="profile-stack">
+            <strong>{user.name}</strong>
+            <span>{user.id} / {user.tier}</span>
+          </div>
+        </div>
+        <div className="profile-note">
           <p>{user.note}</p>
         </div>
       </Card>
-      <Card title="当前 Case" icon={<History />}>
-        <div className="case-summary">
+      <Card title="服务 Case" icon={<History />} className="case-context-panel">
+        <div className="case-summary compact-facts">
           <Info label="Case" value={supportCase?.id ?? "未创建"} />
           <Info label="状态" value={supportCase?.status ?? "idle"} />
           <Info label="类别" value={supportCase?.category ?? "-"} />
@@ -39,7 +44,7 @@ export function CustomerProfile({
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="outcome-item">
+    <div className="fact-row">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
