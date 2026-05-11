@@ -17,10 +17,28 @@ def _truthy(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _csv(value: str | None, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    if value is None:
+        return default
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "local")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    cors_origins: tuple[str, ...] = _csv(
+        os.getenv("CORS_ORIGINS"),
+        ("http://127.0.0.1:5173", "http://localhost:5173"),
+    )
+    cors_allow_credentials: bool = _truthy(os.getenv("CORS_ALLOW_CREDENTIALS"), default=True)
+    _local_env = os.getenv("APP_ENV", "local").strip().lower()
+    demo_header_auth_enabled: bool = _truthy(
+        os.getenv("DEMO_HEADER_AUTH_ENABLED"),
+        default=_local_env in {"local", "dev", "development", "test"},
+    )
+    auth_token_secret: str = os.getenv("AUTH_TOKEN_SECRET", "local-demo-secret-change-me")
+    agent_runtime: str = os.getenv("AGENT_RUNTIME", "orchestrator")
 
     llm_provider: str = os.getenv("LLM_PROVIDER", "mock")
     llm_model: str = os.getenv("LLM_MODEL") or os.getenv("MODEL_NAME") or "gpt-4o-mini"

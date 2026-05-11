@@ -113,24 +113,25 @@ router -> input_policy -> action_planner -> case_binding -> retrieve_policy
 | --- | --- |
 | Agent planning | Intent classification, slot extraction, latest-order resolution, risk level, missing slots, required tools, confirmation and handoff requirements. |
 | Case operations | Service-case ledger, case status, current task, linked ticket, related order, risk level, resolution summary, and audit trail. |
+| Auth and RBAC | Local demo headers in `APP_ENV=local`, HMAC bearer tokens outside local mode, role-scoped API access, and ToolRuntime identity binding. |
 | Tool governance | MCP-style business tools with AuthContext binding, ToolPolicy, risk levels, confirmation boundaries, idempotency keys, and audit logs. |
 | Human confirmation | Medium/high-risk side-effect tools can create pending tasks and resume only after explicit approval. |
 | Human handoff | Unsafe, privacy-sensitive, or operationally complex cases can create support tickets with suggested replies and linked conversations. |
 | RAG | Seeded knowledge documents, deterministic local embeddings, optional semantic embeddings, Qdrant integration, metadata filters, reranking hooks, and grounding metrics. |
 | Streaming UI | Server-sent events for agent steps, ActionPlan, case/task updates, tool calls, citations, tokens, final state, and errors. |
-| Evaluation | Deterministic regression datasets for intent, tools, arguments, missing slots, forbidden tools, RAG grounding, safety, handoff, task success, and latency. |
-| Observability | Conversation snapshots, trace IDs, agent step history, tool-call history, Redis stream state, and runtime health metadata. |
+| Evaluation | Blocking release gates for the unique deterministic fixture set, plus RAG retrieval evals and uploaded CI reports. |
+| Observability | Conversation snapshots, trace detail API, Prometheus-style `/metrics`, tool-call history, Redis stream state, and runtime health metadata. |
 
 ## Technology Stack
 
 | Layer | Technologies |
 | --- | --- |
 | Backend API | Python 3.10+, FastAPI, Pydantic, Uvicorn |
-| Agent runtime | Explicit orchestrator, LangGraph-compatible metadata, mock LLM, OpenAI-compatible chat-completions client |
+| Agent runtime | Explicit orchestrator, LangGraph parity adapter, mock LLM, OpenAI-compatible chat-completions client |
 | Data stores | PostgreSQL adapter, Redis adapter, Qdrant adapter, in-memory fallback stores |
 | Frontend | React 18, TypeScript, Vite, lucide-react, custom operations-console UI |
 | Evaluation | Pytest, deterministic mock provider, JSONL case fixtures, RAG retrieval eval |
-| Infrastructure | Docker Compose, PostgreSQL, Redis, Qdrant, Jaeger, Prometheus, Grafana |
+| Infrastructure | Local-demo Docker Compose, PostgreSQL, Redis, Qdrant, Jaeger, Prometheus, Grafana |
 
 ## Repository Layout
 
@@ -253,6 +254,11 @@ Copy `.env.example` to `.env` for machine-local configuration. `.env` is ignored
 | `LLM_MODEL` / `MODEL_NAME` | `gpt-4o-mini` | Model name passed to the provider. |
 | `OPENAI_API_KEY` | empty | Required for OpenAI-compatible providers. |
 | `OPENAI_BASE_URL` / `OPENAI_API_BASE` | `https://api.openai.com/v1` | OpenAI-compatible chat-completions endpoint. |
+| `CORS_ORIGINS` | local Vite origins | Comma-separated browser origins allowed by FastAPI. |
+| `CORS_ALLOW_CREDENTIALS` | `true` | Whether CORS credentialed requests are allowed. Do not combine with `*` origins. |
+| `DEMO_HEADER_AUTH_ENABLED` | `true` in local | Enables `X-SmartCS-*` identity headers for local demos only. |
+| `AUTH_TOKEN_SECRET` | local placeholder | HMAC secret for bearer-token auth outside local mode. |
+| `AGENT_RUNTIME` | `orchestrator` | `orchestrator` or `langgraph` parity adapter. |
 | `DATA_BACKEND` | `postgres` in `.env.example` | `memory`, `postgres`, or `auto`. |
 | `REDIS_BACKEND` | `redis` in `.env.example` | `memory`, `redis`, or `auto`. |
 | `KB_BACKEND` | `qdrant` in `.env.example` | `memory`, `qdrant`, or `auto`. |
@@ -317,6 +323,10 @@ The evaluation harness reports metrics such as intent accuracy, tool accuracy, t
 argument accuracy, missing-slot accuracy, forbidden-tool violations, citation hit rate,
 groundedness, unsafe request blocking, handoff precision, task success, and latency.
 
+The CI release gate uses the unique JSONL fixtures, currently 22 cases, rather than
+repeating cases to inflate the sample count. See [Evaluation](docs/evaluation.md) and
+[Mock Eval Report](docs/eval_report_mock.md).
+
 ## API Surface
 
 | Method | Path | Purpose |
@@ -333,12 +343,17 @@ groundedness, unsafe request blocking, handoff precision, task success, and late
 | `GET` | `/api/kb/search` | Search the knowledge base. |
 | `POST` | `/api/evals/run` | Run deterministic agent regression cases. |
 | `GET` | `/api/harness/manifest` | Workflow contracts, release gates, and tool metadata. |
+| `GET` | `/api/traces/{trace_id}` | Trace-oriented debugging view with graph path, node latency, tools, citations, and guardrail context. |
 | `GET` | `/health` | Runtime backend and provider health. |
+| `GET` | `/metrics` | Prometheus-style API, eval, and tool-runtime metrics. |
 
 ## Deployment Notes
 
 The repository includes Dockerfiles for the backend and frontend plus a Compose stack for
 local service dependencies.
+
+The provided Compose stack is for local demos and integration tests. It exposes service
+ports and uses demo credentials; do not use it as-is for production.
 
 ```powershell
 docker compose up --build
@@ -362,6 +377,12 @@ the API.
 ## Security and Governance
 
 - `.env` files are ignored by Git; `.env.example` contains only safe placeholder values.
+- `APP_ENV=local` can use `X-SmartCS-User`, `X-SmartCS-Tenant`, and `X-SmartCS-Roles`
+  for local demo switching. Non-local environments require bearer-token auth and reject
+  demo header identity.
+- API routes are RBAC-gated: customers are owner-scoped, agents are tenant-scoped, and
+  admin-only routes cover tools, harness metadata, eval runs, and graph runtime metadata.
+- Case, task, and ticket status changes are guarded by explicit state-machine workflows.
 - Tool calls are bound to an `AuthContext` and checked by `ToolPolicy`.
 - High-risk side effects can require confirmation and idempotency keys.
 - Privacy or prompt-injection cases can be blocked or escalated to a human ticket.
@@ -369,10 +390,12 @@ the API.
 
 ## Known Limitations
 
-- The authentication layer is intentionally demo-oriented and should be replaced before production use.
+- The local demo authentication layer is intentionally simple; production deployments should
+  replace the HMAC token verifier with JWT/OAuth/session authentication from a real IdP.
 - The default mock LLM is deterministic and useful for tests, but it is not a substitute for live-model evaluation.
 - The local deterministic embedding provider is designed for reproducibility, not semantic quality.
-- The LangGraph implementation is currently exposed as workflow metadata; the live executor is the explicit orchestrator sequence.
+- The LangGraph adapter exposes a compiled parity contract; the default live executor remains
+  the explicit orchestrator until parity gates are expanded.
 - Seed data is synthetic and optimized for demo coverage rather than business realism.
 
 ## Roadmap

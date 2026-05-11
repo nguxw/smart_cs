@@ -37,6 +37,7 @@ build/
 .vite/
 frontend/dist/
 data/runtime/
+backend/reports/
 backend/vector_store/
 logs/
 *.log

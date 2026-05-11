@@ -20,6 +20,7 @@ from app.models.schemas import (
     StreamEvent,
     ToolCallRecord,
 )
+from app.state_machines import CaseStatus, CaseWorkflow, TaskStatus, TaskWorkflow
 from app.tools.business_tools import BusinessToolRegistry
 from app.tools.runtime import ToolRuntime
 
@@ -46,6 +47,8 @@ class AgentOrchestrator:
         self.tools = tools
         self.tool_runtime = tool_runtime or ToolRuntime(repository, tools)
         self.llm = llm
+        self.case_workflow = CaseWorkflow(repository)
+        self.task_workflow = TaskWorkflow(repository)
 
     async def run_stream(
         self,
@@ -148,17 +151,14 @@ class AgentOrchestrator:
         if task["status"] != "pending":
             return {"case": case, "task": task, "tool_call": None, "message": "任务已处理"}
         if not approved:
-            updated_task = self.repository.update_task(
-                task_id,
-                {
-                    "status": "cancelled",
-                    "result": {"approved": False, "reason": "customer_cancelled"},
-                },
+            updated_task = self.task_workflow.transition(
+                task_id=task_id,
+                target=TaskStatus.CANCELLED,
+                reason="customer_cancelled",
+                actor=auth_context,
+                result={"approved": False},
             )
-            updated_case = self.repository.update_case(
-                case["id"],
-                {"status": "open", "summary": "用户取消了待确认动作"},
-            )
+            updated_case = self.repository.get_case(case["id"])
             return {
                 "case": updated_case,
                 "task": updated_task,
@@ -180,21 +180,23 @@ class AgentOrchestrator:
             idempotency_key=idempotency_key,
             confirmed=True,
         )
-        updated_task = self.repository.update_task(
-            task_id,
-            {
-                "status": "completed" if call.success else "failed",
-                "result": {
-                    "approved": True,
-                    "tool_call": asdict(call),
-                },
+        updated_task = self.task_workflow.transition(
+            task_id=task_id,
+            target=TaskStatus.COMPLETED if call.success else TaskStatus.FAILED,
+            reason="customer_confirmed",
+            actor=auth_context,
+            result={
+                "approved": True,
+                "tool_call": asdict(call),
             },
         )
         resolution = "退款申请已提交" if call.name == "create_refund" and call.success else ""
-        updated_case = self.repository.update_case(
-            case["id"],
-            {
-                "status": "processing" if call.success else "open",
+        updated_case = self.case_workflow.transition(
+            case_id=case["id"],
+            target=CaseStatus.PROCESSING if call.success else CaseStatus.OPEN,
+            reason=_summarize_tool(call),
+            actor=auth_context,
+            updates={
                 "summary": _summarize_tool(call),
                 "resolution": resolution,
             },
@@ -233,10 +235,12 @@ class AgentOrchestrator:
             confirmed=True,
         )
         ticket = call.result if call.success else None
-        updated_case = self.repository.update_case(
-            case_id,
-            {
-                "status": "handoff",
+        updated_case = self.case_workflow.transition(
+            case_id=case_id,
+            target=CaseStatus.HANDOFF,
+            reason=reason,
+            actor=auth_context,
+            updates={
                 "related_ticket_id": ticket.get("id") if isinstance(ticket, dict) else None,
                 "summary": reason,
                 "risk_level": "high",
@@ -523,15 +527,15 @@ class AgentOrchestrator:
         if not state.case_id:
             return
         for task in self.repository.list_tasks(case_id=state.case_id, status="pending"):
-            self.repository.update_task(
-                task["id"],
-                {
-                    "status": "cancelled",
-                    "result": {"reason": "customer_closed_conversation"},
-                },
+            self.task_workflow.transition(
+                task_id=task["id"],
+                target=TaskStatus.CANCELLED,
+                reason="customer_closed_conversation",
+                actor=_auth_from_state(state),
+                result={"reason": "customer_closed_conversation"},
             )
-        case = self.repository.close_case(state.case_id, resolution)
-        ticket_id = (case or {}).get("related_ticket_id")
+        existing_case = self.repository.get_case(state.case_id)
+        ticket_id = (existing_case or {}).get("related_ticket_id")
         if ticket_id:
             self.repository.update_ticket(
                 ticket_id,
@@ -541,6 +545,14 @@ class AgentOrchestrator:
                     "closed_reason": resolution,
                 },
             )
+        case = self.case_workflow.transition(
+            case_id=state.case_id,
+            target=CaseStatus.RESOLVED,
+            reason=resolution,
+            actor=_auth_from_state(state),
+            updates={"resolution": resolution},
+            allow_pending_tasks=True,
+        )
         state.metadata["latest_case"] = self.repository.get_case(state.case_id) or case
 
     async def _human_handoff(self, state: AgentState) -> None:
@@ -581,10 +593,12 @@ class AgentOrchestrator:
         )
         state.metadata["ticket"] = call.result
         if state.case_id and isinstance(call.result, dict):
-            case = self.repository.update_case(
-                state.case_id,
-                {
-                    "status": "handoff",
+            case = self.case_workflow.transition(
+                case_id=state.case_id,
+                target=CaseStatus.HANDOFF,
+                reason=_summarize_tool(call),
+                actor=auth,
+                updates={
                     "related_ticket_id": call.result.get("id"),
                     "summary": _summarize_tool(call),
                 },

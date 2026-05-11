@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from app.agents.graph_runtime import langgraph_status
+
 
 class SmartCSGraphState(TypedDict, total=False):
     conversation_id: str
@@ -59,11 +61,7 @@ def build_langgraph_metadata() -> dict[str, Any]:
         "langgraph_runtime": "metadata_only",
         "langgraph_nodes_bound": False,
     }
-    try:
-        import langgraph  # noqa: F401
-
-        metadata["langgraph_available"] = True
-    except Exception:
-        pass
+    status = langgraph_status()
+    metadata.update({key: value for key, value in status.items() if key != "graph"})
     metadata["graph"] = None
     return metadata

@@ -297,7 +297,7 @@ RAG Retrieval Eval：
 .\.conda\python.exe -m app.evals.rag_eval --backend qdrant
 ```
 
-评测指标包括 intent accuracy、tool accuracy、tool argument accuracy、missing-slot accuracy、forbidden-tool violation、citation hit rate、groundedness、unsafe blocking、handoff precision、task success 和 latency。
+评测指标包括 intent accuracy、tool accuracy、tool argument accuracy、missing-slot accuracy、forbidden-tool violation、citation hit rate、groundedness、unsafe blocking、handoff precision、task success 和 latency。CI release gate 使用当前 22 条唯一 JSONL fixtures，不通过时阻断合并；详见 `docs/evaluation.md` 与 `docs/eval_report_mock.md`。
 
 ## API 概览
 
@@ -315,7 +315,9 @@ RAG Retrieval Eval：
 | `GET` | `/api/kb/search` | 知识库检索。 |
 | `POST` | `/api/evals/run` | 运行确定性 Agent regression。 |
 | `GET` | `/api/harness/manifest` | 工作流契约、发布门禁和工具元数据。 |
+| `GET` | `/api/traces/{trace_id}` | 按 trace 查看 graph path、节点耗时、工具、引用和 guardrail 上下文。 |
 | `GET` | `/health` | Runtime backend 和 provider 健康状态。 |
+| `GET` | `/metrics` | Prometheus-style API、eval 和工具运行指标。 |
 
 ## 部署说明
 
@@ -341,6 +343,11 @@ Compose stack 包含：
 ## 安全与治理
 
 - `.env` 文件不提交，`.env.example` 只包含安全占位值。
+- `APP_ENV=local` 时允许 `X-SmartCS-User`、`X-SmartCS-Tenant`、`X-SmartCS-Roles`
+  作为本地演示身份切换；非 local 环境需要 bearer token，并拒绝 demo header 提权。
+- API 已按 RBAC 收口：customer 只能访问自己的资源，agent 可访问同 tenant 工单与 case，
+  admin 才能访问 tools、harness、eval 和 graph runtime metadata。
+- Case、Task、Ticket 状态流转通过显式状态机守护，避免直接把状态字段随意改成 resolved/closed。
 - 工具调用绑定 `AuthContext` 并经过 `ToolPolicy`。
 - 高风险副作用操作支持人工确认和幂等键。
 - 隐私敏感或 prompt injection 场景可以拦截或升级为人工工单。

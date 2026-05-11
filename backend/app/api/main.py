@@ -1,23 +1,36 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, cast
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.agents.graph_runtime import create_agent_runtime
 from app.agents.langgraph_workflow import build_langgraph_metadata
 from app.agents.orchestrator import AgentOrchestrator
-from app.auth.context import build_dev_auth_context
+from app.auth.context import AuthContext
+from app.auth.dependencies import (
+    require_auth,
+    require_case_access,
+    require_permission,
+    require_task_access,
+    require_ticket_access,
+)
 from app.core.config import settings
 from app.core.observability import configure_observability
 from app.core.services import create_knowledge_store, create_repository, create_runtime_service
 from app.evals.harness import EvalHarness, build_eval_cases, eval_run_to_dict
 from app.llm.provider import create_llm_provider
+from app.observability.metrics import metrics_registry
+from app.observability.trace_service import TraceService
+from app.state_machines import CaseStatus, CaseWorkflow, TaskWorkflow, TicketWorkflow
+from app.state_machines.errors import StateTransitionError
 from app.tools.business_tools import BusinessToolRegistry
 
 load_dotenv()
@@ -28,22 +41,54 @@ runtime_service = create_runtime_service(settings)
 knowledge_store = create_knowledge_store(settings)
 tool_registry = BusinessToolRegistry(repository)
 llm_provider = create_llm_provider(settings)
-orchestrator = AgentOrchestrator(repository, knowledge_store, tool_registry, llm_provider)
+base_orchestrator = AgentOrchestrator(repository, knowledge_store, tool_registry, llm_provider)
+orchestrator = create_agent_runtime(
+    runtime_name=settings.agent_runtime,
+    orchestrator=base_orchestrator,
+)
+case_workflow = CaseWorkflow(repository)
+task_workflow = TaskWorkflow(repository)
+ticket_workflow = TicketWorkflow(repository)
+trace_service = TraceService(repository, runtime_service)
 eval_runs: dict[str, dict[str, Any]] = {}
+AUTH_CONTEXT = Depends(require_auth)
 
 app = FastAPI(
     title="SmartCS ResolutionOps Console",
     description="电商售后智能客服运营项目",
     version="0.1.0",
 )
+app.state.settings = settings
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=list(settings.cors_origins),
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    route = request.scope.get("route")
+    path = getattr(route, "path", request.url.path)
+    metrics_registry.inc(
+        "smartcs_request_total",
+        method=request.method,
+        path=str(path),
+        status=str(response.status_code),
+    )
+    metrics_registry.observe(
+        "smartcs_request_latency_ms",
+        elapsed_ms,
+        method=request.method,
+        path=str(path),
+    )
+    return response
 
 
 class ChatRequest(BaseModel):
@@ -116,6 +161,36 @@ def to_jsonable(value: Any) -> Any:
 
 def sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(to_jsonable(data), ensure_ascii=False)}\n\n"
+
+
+def _case_visible(case: dict[str, Any], auth: AuthContext) -> bool:
+    if auth.has_permission("*"):
+        return True
+    if case.get("user_id") == auth.user_id and auth.has_permission("case:read:self"):
+        return True
+    return case.get("tenant_id") == auth.tenant_id and auth.has_permission("case:read:tenant")
+
+
+def _ticket_visible(ticket: dict[str, Any], auth: AuthContext) -> bool:
+    if auth.has_permission("*"):
+        return True
+    if ticket.get("user_id") == auth.user_id and auth.has_permission("ticket:create:self"):
+        return True
+    return auth.has_permission("ticket:read:tenant")
+
+
+def _case_for_task(task_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    task = repository.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    case = repository.get_case(task["case_id"])
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return task, case
+
+
+def _state_error(exc: StateTransitionError) -> HTTPException:
+    return HTTPException(status_code=409, detail=str(exc))
 
 
 def build_harness_manifest() -> dict[str, Any]:
@@ -266,16 +341,8 @@ def build_harness_manifest() -> dict[str, Any]:
 @app.post("/api/chat/stream")
 async def chat_stream(
     request: ChatRequest,
-    x_smartcs_user: str | None = Header(default=None),
-    x_smartcs_tenant: str | None = Header(default=None),
-    x_smartcs_roles: str | None = Header(default=None),
+    auth_context: AuthContext = AUTH_CONTEXT,
 ):
-    auth_context = build_dev_auth_context(
-        header_user_id=x_smartcs_user,
-        fallback_user_id=request.user_id,
-        tenant_id=x_smartcs_tenant,
-        roles_header=x_smartcs_roles,
-    )
     rate_limit = runtime_service.check_rate_limit(auth_context.user_id)
     if not rate_limit.allowed:
         raise HTTPException(
@@ -310,15 +377,28 @@ async def chat_stream(
 
 
 @app.get("/api/cases")
-async def list_cases(user_id: str | None = None, status: str | None = None):
-    return {"cases": repository.list_cases(user_id=user_id, status=status)}
+async def list_cases(
+    user_id: str | None = None,
+    status: str | None = None,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    effective_user = user_id
+    if not auth_context.has_permission("case:read:tenant") and not auth_context.has_permission("*"):
+        effective_user = auth_context.user_id
+    cases = [
+        case
+        for case in repository.list_cases(user_id=effective_user, status=status)
+        if _case_visible(case, auth_context)
+    ]
+    return {"auth_source": auth_context.source, "cases": cases}
 
 
 @app.get("/api/cases/{case_id}")
-async def get_case(case_id: str):
+async def get_case(case_id: str, auth_context: AuthContext = AUTH_CONTEXT):
     case = repository.get_case(case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
+    require_case_access(case, auth_context)
     return {
         "case": case,
         "tasks": repository.list_tasks(case_id=case_id),
@@ -327,8 +407,30 @@ async def get_case(case_id: str):
 
 
 @app.patch("/api/cases/{case_id}")
-async def update_case(case_id: str, request: CasePatchRequest):
-    case = repository.update_case(case_id, request.model_dump(exclude_unset=True))
+async def update_case(
+    case_id: str,
+    request: CasePatchRequest,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    existing = repository.get_case(case_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    require_case_access(existing, auth_context, write=True)
+    payload = request.model_dump(exclude_unset=True)
+    try:
+        if payload.get("status"):
+            status = payload.pop("status")
+            case = case_workflow.transition(
+                case_id=case_id,
+                target=CaseStatus(status),
+                reason=payload.get("resolution") or payload.get("summary") or "api_update",
+                actor=auth_context,
+                updates=payload,
+            )
+        else:
+            case = repository.update_case(case_id, payload)
+    except StateTransitionError as exc:
+        raise _state_error(exc) from exc
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
     return case
@@ -338,18 +440,13 @@ async def update_case(case_id: str, request: CasePatchRequest):
 async def handoff_case(
     case_id: str,
     request: HandoffRequest,
-    x_smartcs_user: str | None = Header(default=None),
-    x_smartcs_tenant: str | None = Header(default=None),
-    x_smartcs_roles: str | None = Header(default="agent"),
+    auth_context: AuthContext = AUTH_CONTEXT,
 ):
     case = repository.get_case(case_id)
-    fallback_user = case["user_id"] if case else "anonymous"
-    auth_context = build_dev_auth_context(
-        x_smartcs_user,
-        fallback_user_id=fallback_user,
-        tenant_id=x_smartcs_tenant,
-        roles_header=x_smartcs_roles,
-    )
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    require_case_access(case, auth_context, write=True)
+    require_permission(auth_context, "handoff:manage:tenant")
     try:
         return await orchestrator.handoff_case(case_id, auth_context, reason=request.reason)
     except KeyError as exc:
@@ -357,27 +454,28 @@ async def handoff_case(
 
 
 @app.get("/api/tasks")
-async def list_tasks(case_id: str | None = None, status: str | None = None):
-    return {"tasks": repository.list_tasks(case_id=case_id, status=status)}
+async def list_tasks(
+    case_id: str | None = None,
+    status: str | None = None,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    tasks = repository.list_tasks(case_id=case_id, status=status)
+    visible = []
+    for task in tasks:
+        case = repository.get_case(task["case_id"])
+        if case and _case_visible(case, auth_context):
+            visible.append(task)
+    return {"tasks": visible}
 
 
 @app.post("/api/tasks/{task_id}/confirm")
 async def confirm_task(
     task_id: str,
     request: TaskDecisionRequest,
-    x_smartcs_user: str | None = Header(default=None),
-    x_smartcs_tenant: str | None = Header(default=None),
-    x_smartcs_roles: str | None = Header(default=None),
+    auth_context: AuthContext = AUTH_CONTEXT,
 ):
-    task = repository.get_task(task_id)
-    case = repository.get_case(task["case_id"]) if task else None
-    fallback_user = case["user_id"] if case else "anonymous"
-    auth_context = build_dev_auth_context(
-        x_smartcs_user,
-        fallback_user_id=fallback_user,
-        tenant_id=x_smartcs_tenant,
-        roles_header=x_smartcs_roles,
-    )
+    task, case = _case_for_task(task_id)
+    require_task_access(task, case, auth_context, confirm=True)
     try:
         return await orchestrator.confirm_task(task_id, auth_context, approved=request.approved)
     except KeyError as exc:
@@ -387,19 +485,10 @@ async def confirm_task(
 @app.post("/api/tasks/{task_id}/cancel")
 async def cancel_task(
     task_id: str,
-    x_smartcs_user: str | None = Header(default=None),
-    x_smartcs_tenant: str | None = Header(default=None),
-    x_smartcs_roles: str | None = Header(default=None),
+    auth_context: AuthContext = AUTH_CONTEXT,
 ):
-    task = repository.get_task(task_id)
-    case = repository.get_case(task["case_id"]) if task else None
-    fallback_user = case["user_id"] if case else "anonymous"
-    auth_context = build_dev_auth_context(
-        x_smartcs_user,
-        fallback_user_id=fallback_user,
-        tenant_id=x_smartcs_tenant,
-        roles_header=x_smartcs_roles,
-    )
+    task, case = _case_for_task(task_id)
+    require_task_access(task, case, auth_context, confirm=True)
     try:
         return await orchestrator.confirm_task(task_id, auth_context, approved=False)
     except KeyError as exc:
@@ -411,26 +500,51 @@ async def list_tool_audits(
     conversation_id: str | None = None,
     case_id: str | None = None,
     tool_name: str | None = None,
+    auth_context: AuthContext = AUTH_CONTEXT,
 ):
-    return {
-        "audits": repository.list_tool_audits(
-            conversation_id=conversation_id,
-            case_id=case_id,
-            tool_name=tool_name,
-        )
-    }
+    audits = repository.list_tool_audits(
+        conversation_id=conversation_id,
+        case_id=case_id,
+        tool_name=tool_name,
+    )
+    visible: list[dict[str, Any]] = []
+    for audit in audits:
+        if audit.get("case_id"):
+            case = repository.get_case(audit["case_id"])
+            if case and _case_visible(case, auth_context):
+                visible.append(audit)
+        elif auth_context.has_permission("*") or auth_context.has_permission("case:read:tenant"):
+            visible.append(audit)
+    return {"audits": visible}
 
 
 @app.get("/api/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def get_conversation(
+    conversation_id: str,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
     snapshot = repository.conversation_snapshot(conversation_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    if snapshot.get("user_id") != auth_context.user_id and not auth_context.has_permission(
+        "conversation:read:tenant"
+    ):
+        raise HTTPException(status_code=403, detail="Conversation access denied")
     return snapshot
 
 
 @app.get("/api/conversations/{conversation_id}/stream-state")
-async def get_stream_state(conversation_id: str):
+async def get_stream_state(
+    conversation_id: str,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    snapshot = repository.conversation_snapshot(conversation_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if snapshot.get("user_id") != auth_context.user_id and not auth_context.has_permission(
+        "conversation:read:tenant"
+    ):
+        raise HTTPException(status_code=403, detail="Conversation access denied")
     return {
         "conversation_id": conversation_id,
         "short_memory": runtime_service.get_short_memory(conversation_id),
@@ -439,15 +553,22 @@ async def get_stream_state(conversation_id: str):
 
 
 @app.get("/api/tickets")
-async def list_tickets():
-    return {"tickets": repository.list_tickets()}
+async def list_tickets(auth_context: AuthContext = AUTH_CONTEXT):
+    tickets = [
+        ticket for ticket in repository.list_tickets() if _ticket_visible(ticket, auth_context)
+    ]
+    return {"tickets": tickets}
 
 
 @app.get("/api/tickets/{ticket_id}/thread")
-async def get_ticket_thread(ticket_id: str):
+async def get_ticket_thread(
+    ticket_id: str,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
     ticket = next((row for row in repository.list_tickets() if row["id"] == ticket_id), None)
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    require_ticket_access(ticket, auth_context)
     linked_case = next(
         (
             row
@@ -465,15 +586,31 @@ async def get_ticket_thread(ticket_id: str):
 
 
 @app.patch("/api/tickets/{ticket_id}")
-async def update_ticket(ticket_id: str, request: TicketPatchRequest):
-    ticket = repository.update_ticket(ticket_id, request.model_dump(exclude_unset=True))
-    if ticket is None:
+async def update_ticket(
+    ticket_id: str,
+    request: TicketPatchRequest,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    existing = next((row for row in repository.list_tickets() if row["id"] == ticket_id), None)
+    if existing is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    return ticket
+    require_ticket_access(existing, auth_context, write=True)
+    try:
+        return ticket_workflow.update(
+            ticket_id=ticket_id,
+            payload=request.model_dump(exclude_unset=True),
+            actor=auth_context,
+        )
+    except StateTransitionError as exc:
+        raise _state_error(exc) from exc
 
 
 @app.post("/api/kb/ingest")
-async def ingest_kb(request: KBIngestRequest):
+async def ingest_kb(
+    request: KBIngestRequest,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    require_permission(auth_context, "kb:write")
     docs = knowledge_store.add_document(
         title=request.title,
         content=request.content,
@@ -485,21 +622,36 @@ async def ingest_kb(request: KBIngestRequest):
 
 
 @app.get("/api/kb/search")
-async def search_kb(query: str, top_k: int = 5, category: str | None = None):
+async def search_kb(
+    query: str,
+    top_k: int = 5,
+    category: str | None = None,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    require_permission(auth_context, "kb:read")
     docs = knowledge_store.search(query=query, top_k=top_k, category=category)
     return {"documents": [asdict(doc) for doc in docs]}
 
 
 @app.post("/api/evals/run")
-async def run_evals(request: EvalRunRequest):
+async def run_evals(
+    request: EvalRunRequest,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    require_permission(auth_context, "*")
     run = await EvalHarness(build_eval_cases(request.size)).run()
     payload = eval_run_to_dict(run)
     eval_runs[run.id] = payload
+    metrics_registry.inc("smartcs_eval_run_total", source="api")
     return payload
 
 
 @app.get("/api/evals/{run_id}")
-async def get_eval(run_id: str):
+async def get_eval(
+    run_id: str,
+    auth_context: AuthContext = AUTH_CONTEXT,
+):
+    require_permission(auth_context, "*")
     run = eval_runs.get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Eval run not found")
@@ -507,20 +659,36 @@ async def get_eval(run_id: str):
 
 
 @app.get("/api/tools")
-async def list_tools():
+async def list_tools(auth_context: AuthContext = AUTH_CONTEXT):
+    require_permission(auth_context, "*")
     return {"tools": tool_registry.list_tools()}
 
 
 @app.get("/api/graph")
-async def graph_metadata():
+async def graph_metadata(auth_context: AuthContext = AUTH_CONTEXT):
+    require_permission(auth_context, "*")
     metadata = build_langgraph_metadata()
     metadata.pop("graph", None)
     return metadata
 
 
 @app.get("/api/harness/manifest")
-async def harness_manifest():
+async def harness_manifest(auth_context: AuthContext = AUTH_CONTEXT):
+    require_permission(auth_context, "*")
     return build_harness_manifest()
+
+
+@app.get("/api/traces/{trace_id}")
+async def get_trace(trace_id: str, auth_context: AuthContext = AUTH_CONTEXT):
+    trace = trace_service.get_trace(trace_id, auth_context)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return trace
+
+
+@app.get("/metrics")
+async def metrics():
+    return PlainTextResponse(metrics_registry.render_prometheus(), media_type="text/plain")
 
 
 @app.get("/health")

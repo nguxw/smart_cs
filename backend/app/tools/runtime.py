@@ -7,6 +7,7 @@ from typing import Any
 
 from app.auth.context import AuthContext
 from app.models.schemas import ToolCallRecord
+from app.observability.metrics import metrics_registry
 from app.tools.business_tools import BusinessToolRegistry
 
 
@@ -44,6 +45,9 @@ class ToolPolicyDecision:
     reason: str = ""
     requires_confirmation: bool = False
     risk_level: ToolRiskLevel = ToolRiskLevel.READ_ONLY
+    subject_user_id: str | None = None
+    resource_id: str | None = None
+    policy_rules_hit: tuple[str, ...] = ()
 
 
 class ToolPolicy:
@@ -72,6 +76,7 @@ class ToolPolicy:
                 False,
                 "schema_invalid",
                 f"Missing required fields: {missing}",
+                policy_rules_hit=("schema.required",),
             )
 
         permission = TOOL_PERMISSIONS.get(tool_name)
@@ -81,6 +86,8 @@ class ToolPolicy:
                 "permission_denied",
                 f"Missing permission: {permission}",
                 risk_level=TOOL_RISK_LEVELS.get(tool_name, ToolRiskLevel.READ_ONLY),
+                subject_user_id=auth_context.user_id,
+                policy_rules_hit=("rbac.permission",),
             )
 
         risk_level = TOOL_RISK_LEVELS.get(tool_name, ToolRiskLevel.READ_ONLY)
@@ -91,10 +98,22 @@ class ToolPolicy:
                 "Side-effect tool requires explicit confirmation before execution.",
                 requires_confirmation=True,
                 risk_level=risk_level,
+                subject_user_id=auth_context.user_id,
+                resource_id=str(
+                    arguments.get("order_id") or arguments.get("conversation_id") or ""
+                ),
+                policy_rules_hit=("risk.confirmation_required",),
             )
 
         status = "side_effect_approved" if risk_level != ToolRiskLevel.READ_ONLY else "approved"
-        return ToolPolicyDecision(True, status, risk_level=risk_level)
+        return ToolPolicyDecision(
+            True,
+            status,
+            risk_level=risk_level,
+            subject_user_id=auth_context.user_id,
+            resource_id=str(arguments.get("order_id") or arguments.get("conversation_id") or ""),
+            policy_rules_hit=("risk.approved",),
+        )
 
 
 class ToolRuntime:
@@ -146,6 +165,9 @@ class ToolRuntime:
                 "reason": decision.reason,
                 "requires_confirmation": decision.requires_confirmation,
                 "risk_level": decision.risk_level.value,
+                "subject_user_id": decision.subject_user_id,
+                "resource_id": decision.resource_id,
+                "policy_rules_hit": list(decision.policy_rules_hit),
             }
             audit = self.repository.append_tool_audit(
                 conversation_id=conversation_id,
@@ -161,7 +183,7 @@ class ToolRuntime:
                 idempotency_key=idempotency_key,
                 requires_confirmation=decision.requires_confirmation,
             )
-            return ToolCallRecord(
+            record = ToolCallRecord(
                 name=tool_name,
                 arguments=safe_arguments,
                 success=False,
@@ -173,6 +195,13 @@ class ToolRuntime:
                 idempotency_key=idempotency_key,
                 requires_confirmation=decision.requires_confirmation,
             )
+            metrics_registry.inc(
+                "smartcs_tool_call_total",
+                tool=tool_name,
+                status=decision.status,
+                success="false",
+            )
+            return record
 
         call = await self.registry.call_tool(tool_name, safe_arguments)
         audit = self.repository.append_tool_audit(
@@ -192,6 +221,12 @@ class ToolRuntime:
         call.audit_id = audit["id"]
         call.policy_status = decision.status
         call.idempotency_key = idempotency_key
+        metrics_registry.inc(
+            "smartcs_tool_call_total",
+            tool=tool_name,
+            status=decision.status,
+            success=str(call.success).lower(),
+        )
         return call
 
     @staticmethod
