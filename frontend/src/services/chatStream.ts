@@ -1,4 +1,5 @@
 import type {
+  ActionPlan,
   AgentStep,
   CaseTask,
   Citation,
@@ -7,11 +8,12 @@ import type {
   SupportCase,
   ToolCall
 } from "../types/api";
-import { API_BASE, authHeaders } from "./apiClient";
+import { apiUrl, authHeaders, fetchApi } from "./apiClient";
 
 export type ChatStreamHandlers = {
   onToken: (content: string) => void;
   onAgentStep: (step: AgentStep) => void;
+  onActionPlan: (plan: ActionPlan) => void;
   onCitation: (doc: Citation) => void;
   onToolCall: (call: ToolCall) => void;
   onCaseUpdate: (supportCase: SupportCase) => void;
@@ -33,7 +35,7 @@ export async function streamChat(
   conversationId: string | null,
   handlers: ChatStreamHandlers
 ) {
-  const response = await fetch(`${API_BASE}/api/chat/stream`, {
+  const response = await fetchApi(apiUrl("/api/chat/stream"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(userId) },
     body: JSON.stringify({
@@ -75,6 +77,7 @@ function handleFrame(frame: string, handlers: ChatStreamHandlers) {
   if (!event || !dataText) return;
   const data = JSON.parse(dataText);
   if (event === "agent_step" && data.status !== "started") handlers.onAgentStep(data);
+  if (event === "action_plan") handlers.onActionPlan(data);
   if (event === "citation") handlers.onCitation(data);
   if (event === "tool_call") handlers.onToolCall(data);
   if (event === "case_update") handlers.onCaseUpdate(data);

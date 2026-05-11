@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from app.core.config import Settings
 from app.data.postgres_repository import PostgresRepository
 from app.data.repository import DemoRepository
+from app.rag.embeddings import create_embedding_provider
 from app.rag.knowledge_store import HybridKnowledgeStore
 from app.rag.qdrant_store import QdrantKnowledgeStore
 from app.runtime.redis_runtime import NullRuntimeService, RedisRuntimeService
@@ -60,10 +61,16 @@ def create_knowledge_store(settings: Settings) -> QdrantKnowledgeStore | HybridK
                 store.ingest_markdown_dir(seed_dir)
             return store
         try:
+            embedding_provider = create_embedding_provider(
+                provider=settings.embedding_provider,
+                vector_size=settings.qdrant_vector_size,
+                model_name=settings.embedding_model,
+            )
             qdrant_store = QdrantKnowledgeStore(
                 url=settings.qdrant_url,
                 collection_name=settings.qdrant_collection,
                 vector_size=settings.qdrant_vector_size,
+                embedding_provider=embedding_provider,
             )
             qdrant_store.ping()
             qdrant_store.ingest_markdown_dir(seed_dir)

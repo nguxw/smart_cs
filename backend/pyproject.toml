@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Full-stack multi-agent e-commerce customer support desk"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",

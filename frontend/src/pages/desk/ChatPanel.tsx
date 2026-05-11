@@ -21,7 +21,7 @@ export function ChatPanel({
   onScenario: (userId: string, prompt: string) => void;
   onReset: () => void;
 }) {
-  const [input, setInput] = useState(SCENARIOS[0].prompt);
+  const [input, setInput] = useState("");
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -36,10 +36,16 @@ export function ChatPanel({
       <div className="pane-head">
         <div>
           <h2>会话处理</h2>
-          <p>先判断客户意图，再把任务、证据和副作用动作挂到同一个 Case。</p>
+          <p>先判断客户意图，再把任务、证据和副作用动作挂到同一个服务案件。</p>
         </div>
         <div className="head-actions">
-          <Button tone="subtle" onClick={onReset}>
+          <Button
+            tone="subtle"
+            onClick={() => {
+              setInput("");
+              onReset();
+            }}
+          >
             新会话
           </Button>
           {busy ? (
@@ -77,7 +83,7 @@ export function ChatPanel({
           <div className="empty-state">
             <Bot size={34} />
             <strong>等待客户问题</strong>
-            <p>系统会创建服务 Case、判断任务、生成推荐动作，并保留工具审计。</p>
+            <p>系统会创建服务案件、判断任务、生成推荐动作，并保留工具审计。</p>
           </div>
         )}
         {messages.map((message, index) => (

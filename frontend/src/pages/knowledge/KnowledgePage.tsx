@@ -95,6 +95,7 @@ export function KnowledgePage({
 
       <Card title="知识导入" icon={<FilePlus2 />} className="knowledge-ingest">
         <form className="operation-form knowledge-editor" onSubmit={onIngest}>
+          <div className="form-section knowledge-fields">
           <label>
             <span>标题</span>
             <input value={form.title} onChange={(event) => setForm((item) => ({ ...item, title: event.target.value }))} />
@@ -119,10 +120,13 @@ export function KnowledgePage({
             <span>标签</span>
             <input value={form.tags} onChange={(event) => setForm((item) => ({ ...item, tags: event.target.value }))} />
           </label>
+          </div>
+          <div className="form-section knowledge-content">
           <label>
             <span>内容</span>
             <textarea value={form.content} onChange={(event) => setForm((item) => ({ ...item, content: event.target.value }))} />
           </label>
+          </div>
           <div className="form-footer">
             <Button type="submit" disabled={busy || !form.title || !form.content}>
               写入知识库

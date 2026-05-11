@@ -8,15 +8,16 @@ flowchart LR
   FE --> API["FastAPI SSE API"]
   API --> R["router"]
   R --> P["input_policy"]
-  P --> C["case_binding"]
+  P --> AP["action_planner"]
+  AP --> C["case_binding"]
   C --> K["retrieve_policy"]
   K --> O["tool_policy"]
   O --> H["human_confirm / interrupt"]
   O --> T["human_handoff"]
   H --> G["guardrail"]
   T --> G
-  G --> A["compose_answer"]
-  A --> M["memory_writer"]
+  G --> CA["compose_answer"]
+  CA --> M["memory_writer"]
   K --> Q["Qdrant Vector Store"]
   O --> TR["ToolRuntime + ToolPolicy + Audit"]
   TR --> MCP["MCP Business Tools"]
@@ -30,7 +31,7 @@ The eval harness replays categorized e-commerce cases through the same orchestra
 
 ## Production Swap Points
 
-- `LLMProvider`: switch `LLM_PROVIDER=openai` and set `OPENAI_API_KEY`, `OPENAI_API_BASE`, `MODEL_NAME`.
+- `LLMProvider`: switch `LLM_PROVIDER=openai-compatible` and set `OPENAI_API_KEY`, `OPENAI_API_BASE`, `MODEL_NAME`.
 - `PostgresRepository`: stores users, orders, refunds, tickets, cases, tasks, tool audits, conversations, messages, agent steps, tool calls, and trace IDs.
 - `RedisRuntimeService`: stores short-term memory, stream events, and rate-limit counters.
 - `QdrantKnowledgeStore`: stores seeded and manually ingested knowledge chunks as vectors with metadata filters, reranking, and grounding metadata.

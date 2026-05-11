@@ -1,18 +1,62 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { Ticket } from "../types/api";
-import { fetchTickets, updateTicket } from "../services/ticketsApi";
+import type { Ticket, TicketThread } from "../types/api";
+import { fetchTicketThread, fetchTickets, updateTicket } from "../services/ticketsApi";
 
 export function useTickets() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const selectedTicketIdRef = useRef<string | null>(null);
+  const [thread, setThread] = useState<TicketThread | null>(null);
   const [busy, setBusy] = useState(false);
+  const [threadBusy, setThreadBusy] = useState(false);
+
+  const loadThread = useCallback(async (ticketId: string | null) => {
+    if (!ticketId) {
+      setThread(null);
+      return null;
+    }
+    setThreadBusy(true);
+    try {
+      const nextThread = await fetchTicketThread(ticketId);
+      setThread(nextThread);
+      return nextThread;
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.startsWith("404 ")) {
+        setThread(null);
+        return null;
+      }
+      throw cause;
+    } finally {
+      setThreadBusy(false);
+    }
+  }, []);
+
+  const selectTicket = useCallback(
+    (ticketId: string) => {
+      selectedTicketIdRef.current = ticketId;
+      setSelectedTicketId(ticketId);
+      void loadThread(ticketId);
+    },
+    [loadThread]
+  );
 
   const refresh = useCallback(async () => {
-    const rows = await fetchTickets();
-    setTickets(rows);
-    setSelectedTicketId((current) => current ?? rows[0]?.id ?? null);
-  }, []);
+    setBusy(true);
+    try {
+      const rows = await fetchTickets();
+      const current = selectedTicketIdRef.current;
+      const nextSelectedId = rows.some((ticket) => ticket.id === current)
+        ? current
+        : rows[0]?.id ?? null;
+      selectedTicketIdRef.current = nextSelectedId;
+      setTickets(rows);
+      setSelectedTicketId(nextSelectedId);
+      await loadThread(nextSelectedId);
+    } finally {
+      setBusy(false);
+    }
+  }, [loadThread]);
 
   useEffect(() => {
     void refresh();
@@ -39,23 +83,33 @@ export function useTickets() {
       try {
         const updated = await updateTicket(ticketId, payload);
         await refresh();
+        selectedTicketIdRef.current = updated.id;
         setSelectedTicketId(updated.id);
+        await loadThread(updated.id);
         return updated;
       } finally {
         setBusy(false);
       }
     },
-    [refresh]
+    [loadThread, refresh]
+  );
+
+  const refreshThread = useCallback(
+    () => loadThread(selectedTicketIdRef.current),
+    [loadThread]
   );
 
   return {
     tickets,
     selectedTicket,
     selectedTicketId,
-    setSelectedTicketId,
+    setSelectedTicketId: selectTicket,
+    thread,
+    threadBusy,
     stats,
     busy,
     refresh,
+    refreshThread,
     saveTicket
   };
 }

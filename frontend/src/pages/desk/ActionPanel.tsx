@@ -26,8 +26,20 @@ export function ActionPanel({
       <div className="action-card">
         <div>
           <span>下一步</span>
-          <strong>{hasPending ? "等待用户确认" : outcome.title}</strong>
-          <p>{hasPending ? String(pendingConfirmation?.summary ?? "请确认高风险操作。") : outcome.detail}</p>
+          <strong>
+            {hasPending
+              ? `${pendingConfirmation?.mode === "dry_run" ? "Dry-run 待确认" : "等待用户确认"}`
+              : outcome.title}
+          </strong>
+          <p>
+            {hasPending
+              ? String(
+                  pendingConfirmation?.estimated_effect ??
+                    pendingConfirmation?.summary ??
+                    "请确认高风险操作。"
+                )
+              : outcome.detail}
+          </p>
         </div>
         <Badge tone={hasPending ? "amber" : outcome.tone}>{hasPending ? "confirm" : outcome.status}</Badge>
       </div>

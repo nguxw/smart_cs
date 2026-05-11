@@ -82,7 +82,7 @@ export function EvalPage({
         </div>
       </Card>
 
-      <Card title="失败 Case" icon={<Gauge />} className="failed-cases">
+      <Card title="失败样本" icon={<Gauge />} className="failed-cases">
         <div className="failed-table">
           {(failedCases ?? []).slice(0, 12).map((row) => (
             <div key={String(row.id)} className="failed-row">
@@ -91,7 +91,7 @@ export function EvalPage({
               <p>{String(row.answer ?? "")}</p>
             </div>
           ))}
-          {(!failedCases || failedCases.length === 0) && <p className="muted">当前无失败 case。</p>}
+          {(!failedCases || failedCases.length === 0) && <p className="muted">当前无失败样本。</p>}
         </div>
       </Card>
 

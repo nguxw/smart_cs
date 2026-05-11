@@ -188,6 +188,11 @@ POSTGRES_SCHEMA_DDL = [
         created_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_audits_idempotency
+    ON tool_audits(tool_name, idempotency_key)
+    WHERE idempotency_key IS NOT NULL
+    """,
 ]
 
 
@@ -636,7 +641,6 @@ class PostgresRepository:
 
     def update_ticket(self, ticket_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         sync_human_reply = "human_reply" in payload and bool(payload.get("human_reply"))
-        close_case = payload.get("status") == "resolved"
         fields = [
             field_name
             for field_name in (
@@ -680,7 +684,10 @@ class PostgresRepository:
             ).fetchone()
             if row is None:
                 return None
-            if sync_human_reply and payload.get("human_reply") != previous.get("human_reply"):
+            human_reply_changed = (
+                sync_human_reply and payload.get("human_reply") != previous.get("human_reply")
+            )
+            if human_reply_changed:
                 linked_cases = conn.execute(
                     "SELECT id, conversation_id FROM cases WHERE related_ticket_id = %s",
                     (ticket_id,),
@@ -700,28 +707,50 @@ class PostgresRepository:
                         """,
                         (now, case["conversation_id"]),
                     )
-                    conn.execute(
-                        """
-                        UPDATE cases
-                        SET summary = %s, updated_at = %s
-                        WHERE id = %s
-                        """,
-                        (str(payload["human_reply"])[:180], now, case["id"]),
+            case_updates: dict[str, Any] = {}
+            if "priority" in fields:
+                case_updates["priority"] = row["priority"]
+            if "category" in fields:
+                case_updates["category"] = row["category"]
+            if human_reply_changed:
+                case_updates["summary"] = str(row["human_reply"])[:180]
+            elif "agent_summary" in fields and row.get("agent_summary"):
+                case_updates["summary"] = str(row["agent_summary"])[:180]
+            if "status" in fields:
+                if row["status"] == "resolved":
+                    case_updates["status"] = "resolved"
+                    case_updates["resolution"] = (
+                        row.get("closed_reason")
+                        or row.get("resolution_type")
+                        or row.get("human_reply")
+                        or "工单已关闭"
                     )
-            if close_case:
-                resolution = (
-                    payload.get("closed_reason")
-                    or payload.get("resolution_type")
-                    or payload.get("human_reply")
+                elif row["status"] == "pending":
+                    case_updates["status"] = "waiting_customer"
+                    case_updates["resolution"] = ""
+                else:
+                    case_updates["status"] = "handoff"
+                    case_updates["resolution"] = ""
+            elif row["status"] == "resolved" and set(fields).intersection(
+                {"closed_reason", "resolution_type", "human_reply"}
+            ):
+                case_updates["status"] = "resolved"
+                case_updates["resolution"] = (
+                    row.get("closed_reason")
+                    or row.get("resolution_type")
+                    or row.get("human_reply")
                     or "工单已关闭"
                 )
+            if case_updates:
+                assignments = ", ".join(f"{field_name} = %s" for field_name in case_updates)
+                values = [*case_updates.values(), utc_now(), ticket_id]
                 conn.execute(
-                    """
+                    f"""
                     UPDATE cases
-                    SET status = 'resolved', resolution = %s, updated_at = %s
+                    SET {assignments}, updated_at = %s
                     WHERE related_ticket_id = %s
                     """,
-                    (resolution, utc_now(), ticket_id),
+                    values,
                 )
         return dict(row) if row else None
 

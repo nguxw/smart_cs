@@ -5,9 +5,20 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-Intent = Literal["faq", "order", "refund", "invoice", "ticket", "handoff", "privacy", "unknown"]
+Intent = Literal[
+    "faq",
+    "order",
+    "refund",
+    "invoice",
+    "ticket",
+    "handoff",
+    "privacy",
+    "closing",
+    "unknown",
+]
 SSEEventType = Literal[
     "agent_step",
+    "action_plan",
     "tool_call",
     "citation",
     "token",
@@ -19,6 +30,7 @@ SSEEventType = Literal[
     "audit",
     "action_required",
 ]
+RiskLevel = Literal["low", "medium", "high"]
 
 
 def utc_now() -> str:
@@ -71,6 +83,19 @@ class GuardrailResult:
 
 
 @dataclass
+class ActionPlan:
+    intent: Intent
+    confidence: float
+    slots: dict[str, Any] = field(default_factory=dict)
+    required_tools: list[str] = field(default_factory=list)
+    missing_slots: list[str] = field(default_factory=list)
+    risk_level: RiskLevel = "low"
+    requires_confirmation: bool = False
+    requires_handoff: bool = False
+    reason: str = ""
+
+
+@dataclass
 class AgentStep:
     agent: str
     status: Literal["started", "completed", "skipped", "failed"]
@@ -84,6 +109,7 @@ class AgentState:
     user_profile: dict[str, Any]
     auth_context: dict[str, Any] = field(default_factory=dict)
     intent: Intent = "unknown"
+    action_plan: ActionPlan | None = None
     retrieved_docs: list[KnowledgeDoc] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     draft_answer: str = ""

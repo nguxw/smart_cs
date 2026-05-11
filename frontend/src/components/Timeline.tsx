@@ -20,7 +20,8 @@ function labelAgent(agent: string) {
   const labels: Record<string, string> = {
     router: "识别意图",
     input_policy: "输入安全",
-    case_binding: "绑定Case",
+    action_planner: "行动计划",
+    case_binding: "绑定服务案件",
     retrieve_policy: "检索知识",
     tool_policy: "业务工具",
     human_confirm: "用户确认",

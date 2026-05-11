@@ -14,6 +14,8 @@ def extract_order_id(message: str) -> str | None:
 
 def classify_intent(message: str) -> Intent:
     text = message.lower()
+    if _is_closing_request(message, text):
+        return "closing"
     if any(word in message for word in ("朋友", "别人", "他人", "收货地址", "隐私")):
         return "privacy"
     if any(word in message for word in ("人工", "投诉", "客服介入", "转人工", "工单")):
@@ -32,3 +34,32 @@ def classify_intent(message: str) -> Intent:
     if "ord-" in text:
         return "order"
     return "faq"
+
+
+def _is_closing_request(message: str, text: str) -> bool:
+    normalized = re.sub(r"[\s。.!！?？~～,，、]+", "", text)
+    closing_phrases = (
+        "结束吧",
+        "结束了",
+        "结束对话",
+        "结束会话",
+        "关闭对话",
+        "关闭会话",
+        "不用了",
+        "不需要了",
+        "没事了",
+        "没有问题了",
+        "没问题了",
+        "可以了",
+        "就这样",
+        "先这样",
+        "再见",
+        "拜拜",
+        "bye",
+        "goodbye",
+        "thanksbye",
+        "thankyoubye",
+    )
+    if normalized in closing_phrases:
+        return True
+    return any(phrase in message for phrase in ("结束本次", "到此为止", "无需继续"))

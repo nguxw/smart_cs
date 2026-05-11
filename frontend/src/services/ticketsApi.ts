@@ -1,4 +1,4 @@
-import type { Ticket } from "../types/api";
+import type { Ticket, TicketThread } from "../types/api";
 import { API_BASE, authHeaders, fetchJson } from "./apiClient";
 
 export async function fetchTickets() {
@@ -12,6 +12,10 @@ export async function updateTicket(ticketId: string, payload: Partial<Ticket>) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+}
+
+export async function fetchTicketThread(ticketId: string) {
+  return fetchJson<TicketThread>(`${API_BASE}/api/tickets/${ticketId}/thread`);
 }
 
 export async function handoffCase(caseId: string, userId: string, reason: string) {

@@ -1,34 +1,54 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ClipboardList, RefreshCw, Send, UserRound } from "lucide-react";
+import {
+  CheckCircle2,
+  ClipboardList,
+  MessageSquare,
+  RefreshCw,
+  Save,
+  Send,
+  UserRound
+} from "lucide-react";
 
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { EmptyState } from "../../components/EmptyState";
-import type { Ticket } from "../../types/api";
+import type { ConversationMessage, Ticket, TicketThread } from "../../types/api";
 import { CATEGORY_OPTIONS, PRIORITY_OPTIONS, STATUS_OPTIONS } from "../../shared/demoData";
 
 export function TicketsPage({
   tickets,
   selectedTicket,
+  thread,
+  threadBusy,
   onSelectTicket,
   onSaveTicket,
+  onRefreshThread,
+  onOpenConversation,
   onRefresh,
   busy
 }: {
   tickets: Ticket[];
   selectedTicket: Ticket | null;
+  thread: TicketThread | null;
+  threadBusy: boolean;
   onSelectTicket: (ticketId: string) => void;
   onSaveTicket: (ticketId: string, payload: Partial<Ticket>) => Promise<unknown>;
+  onRefreshThread: () => void;
+  onOpenConversation: (conversationId: string, userId: string) => void;
   onRefresh: () => void;
   busy: boolean;
 }) {
   const [queue, setQueue] = useState("active");
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Partial<Ticket>>({});
+  const [replyDraft, setReplyDraft] = useState("");
 
   useEffect(() => {
-    if (selectedTicket) setDraft(selectedTicket);
+    if (selectedTicket) {
+      setDraft(selectedTicket);
+      setReplyDraft(selectedTicket.human_reply || selectedTicket.suggested_reply || "");
+    }
   }, [selectedTicket]);
 
   const filtered = useMemo(() => {
@@ -51,10 +71,49 @@ export function TicketsPage({
     });
   }, [query, queue, tickets]);
 
-  async function save(event: FormEvent) {
+  function editablePayload(): Partial<Ticket> {
+    return {
+      title: draft.title,
+      status: draft.status,
+      priority: draft.priority,
+      category: draft.category,
+      assigned_to: draft.assigned_to,
+      assignee_name: draft.assignee_name,
+      agent_summary: draft.agent_summary,
+      resolution_type: draft.resolution_type,
+      closed_reason: draft.closed_reason
+    };
+  }
+
+  async function saveDraft(event: FormEvent) {
     event.preventDefault();
     if (!selectedTicket) return;
-    await onSaveTicket(selectedTicket.id, draft);
+    await onSaveTicket(selectedTicket.id, {
+      ...editablePayload(),
+      suggested_reply: replyDraft
+    });
+  }
+
+  async function sendReply() {
+    if (!selectedTicket || !replyDraft.trim()) return;
+    await onSaveTicket(selectedTicket.id, {
+      ...editablePayload(),
+      status: draft.status === "resolved" ? "resolved" : "pending",
+      human_reply: replyDraft.trim()
+    });
+  }
+
+  async function resolveTicket() {
+    if (!selectedTicket) return;
+    const finalReply = replyDraft.trim();
+    await onSaveTicket(selectedTicket.id, {
+      ...editablePayload(),
+      status: "resolved",
+      human_reply: finalReply || undefined,
+      closed_reason:
+        draft.closed_reason || finalReply || draft.resolution_type || "人工处理完成",
+      resolution_type: draft.resolution_type || "manual_resolution"
+    });
   }
 
   async function quickPatch(payload: Partial<Ticket>) {
@@ -93,7 +152,7 @@ export function TicketsPage({
             </span>
             <div>
               <h2>坐席队列</h2>
-              <p>{filtered.length} 条结果，保存人工回复后会回写关联会话。</p>
+              <p>{filtered.length} 条结果，人工回复可回写关联会话。</p>
             </div>
           </div>
           <button className="icon-button" type="button" aria-label="刷新工单" onClick={onRefresh}>
@@ -126,7 +185,7 @@ export function TicketsPage({
 
       <Card className="ticket-workbench">
         {selectedTicket ? (
-          <form className="operation-form ticket-editor" onSubmit={save}>
+          <form className="operation-form ticket-editor" onSubmit={saveDraft}>
             <div className="detail-head workbench-head">
               <div>
                 <span>处理台</span>
@@ -144,10 +203,6 @@ export function TicketsPage({
               <Button tone="subtle" onClick={() => void quickPatch({ assigned_to: "tier2", assignee_name: "二线支持" })}>
                 转派二线
               </Button>
-              <Button tone="subtle" onClick={() => void quickPatch({ status: "resolved", closed_reason: "问题已解决" })}>
-                <CheckCircle2 size={17} />
-                关闭
-              </Button>
             </div>
             <div className="form-section">
               <label>
@@ -164,20 +219,36 @@ export function TicketsPage({
                 </label>
               </div>
             </div>
-            <div className="form-section">
+            <div className="form-section ticket-summary-section">
               <label>
                 <span>Agent 摘要</span>
                 <textarea value={draft.agent_summary ?? draft.description ?? ""} onChange={(event) => setDraft((item) => ({ ...item, agent_summary: event.target.value }))} />
               </label>
+            </div>
+            <TicketConversationPanel
+              thread={thread}
+              busy={threadBusy}
+              onRefresh={onRefreshThread}
+              onOpenConversation={onOpenConversation}
+            />
+            <div className="form-section ticket-reply-section">
               <label>
-                <span>推荐回复 / 人工回复</span>
-                <textarea value={draft.human_reply ?? draft.suggested_reply ?? ""} onChange={(event) => setDraft((item) => ({ ...item, human_reply: event.target.value }))} />
+                <span>人工回复</span>
+                <textarea value={replyDraft} onChange={(event) => setReplyDraft(event.target.value)} />
               </label>
             </div>
             <div className="form-footer">
-              <Button type="submit" disabled={busy}>
+              <Button tone="subtle" type="submit" disabled={busy}>
+                <Save size={17} />
+                保存修改
+              </Button>
+              <Button type="button" disabled={busy || !replyDraft.trim()} onClick={() => void sendReply()}>
                 <Send size={17} />
-                保存并回写
+                发送并回写
+              </Button>
+              <Button tone="danger" type="button" disabled={busy} onClick={() => void resolveTicket()}>
+                <CheckCircle2 size={17} />
+                结束工单
               </Button>
             </div>
           </form>
@@ -187,6 +258,72 @@ export function TicketsPage({
       </Card>
     </section>
   );
+}
+
+function TicketConversationPanel({
+  thread,
+  busy,
+  onRefresh,
+  onOpenConversation
+}: {
+  thread: TicketThread | null;
+  busy: boolean;
+  onRefresh: () => void;
+  onOpenConversation: (conversationId: string, userId: string) => void;
+}) {
+  const conversation = thread?.conversation ?? null;
+  const messages = conversation?.messages.slice(-10) ?? [];
+  return (
+    <section className="ticket-thread-panel" aria-label="关联客户会话">
+      <div className="ticket-thread-head">
+        <div>
+          <span>关联会话</span>
+          <strong>{conversation?.id ?? "未关联"}</strong>
+        </div>
+        <div className="ticket-thread-actions">
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="刷新关联会话"
+            onClick={onRefresh}
+            disabled={busy}
+          >
+            <RefreshCw className={busy ? "spin" : ""} size={17} />
+          </button>
+          <Button
+            tone="subtle"
+            disabled={!conversation}
+            onClick={() => {
+              if (conversation) onOpenConversation(conversation.id, conversation.user_id);
+            }}
+          >
+            <MessageSquare size={17} />
+            打开会话
+          </Button>
+        </div>
+      </div>
+      <div className="ticket-thread-list">
+        {messages.map((message, index) => (
+          <article
+            key={`${message.role}-${message.created_at ?? index}-${index}`}
+            className={`ticket-thread-message ${message.role}`}
+          >
+            <span>{roleLabel(message)}</span>
+            <p>{message.content}</p>
+          </article>
+        ))}
+        {messages.length === 0 && (
+          <EmptyState text={conversation ? "暂无会话消息" : "该工单尚未关联会话"} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function roleLabel(message: ConversationMessage) {
+  if (message.role === "user") return "客户";
+  if (message.role === "assistant") return "坐席";
+  return "系统";
 }
 
 function Select({

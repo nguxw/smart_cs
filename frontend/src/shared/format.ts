@@ -16,6 +16,40 @@ export function formatGateValue(key: string, value: number) {
   return String(value);
 }
 
+export function formatReadableDateTime(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDiff = Math.round(
+    (startOfToday.getTime() - startOfDate.getTime()) / (24 * 60 * 60 * 1000)
+  );
+  const time = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
+
+  if (dayDiff === 0) return `今天 ${time}`;
+  if (dayDiff === 1) return `昨天 ${time}`;
+
+  const options: Intl.DateTimeFormatOptions =
+    date.getFullYear() === now.getFullYear()
+      ? { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }
+      : {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false
+        };
+  return new Intl.DateTimeFormat("zh-CN", options).format(date).replace(/\//g, "-");
+}
+
 export function formatEdge(edge: GraphEdge) {
   if (Array.isArray(edge)) return `${edge[0]} -> ${edge[1]}`;
   if (typeof edge === "object") {

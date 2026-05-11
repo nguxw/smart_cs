@@ -7,6 +7,7 @@ from dataclasses import asdict
 from typing import Any
 
 from app.agents.guardrails import check_input_safety, check_output_safety
+from app.agents.planner import build_action_plan
 from app.agents.router import classify_intent, extract_order_id
 from app.auth.context import AuthContext, build_dev_auth_context
 from app.data.repository import DemoRepository
@@ -69,6 +70,8 @@ class AgentOrchestrator:
         async for event in self._run_node("router", state, steps, self._router):
             yield event
         async for event in self._run_node("input_policy", state, steps, self._input_policy):
+            yield event
+        async for event in self._run_node("action_planner", state, steps, self._action_planner):
             yield event
         async for event in self._run_node("case_binding", state, steps, self._case_binding):
             yield event
@@ -274,6 +277,8 @@ class AgentOrchestrator:
             )
             if name == "case_binding" and state.metadata.get("latest_case"):
                 yield _event("case_update", **state.metadata["latest_case"])
+            if name == "action_planner" and state.action_plan:
+                yield _event("action_plan", **asdict(state.action_plan))
             if (
                 state.task_id
                 and state.task_id != previous_task_id
@@ -332,9 +337,38 @@ class AgentOrchestrator:
             state.metadata["needs_ticket"] = True
             state.metadata["risk_level"] = "high"
 
+    async def _action_planner(self, state: AgentState) -> None:
+        latest = state.messages[-1].content
+        plan = build_action_plan(latest, state.intent, state.metadata.get("order_id"))
+        if plan.slots.get("order_reference") == "latest" and not plan.slots.get("order_id"):
+            auth = _auth_from_state(state)
+            latest_order = self.repository.latest_order_for_user(auth.user_id)
+            if latest_order:
+                plan.slots["order_id"] = latest_order.id
+                state.metadata["order_id"] = latest_order.id
+                state.metadata["order_id_source"] = "latest_reference"
+        state.action_plan = plan
+        state.metadata["risk_level"] = _max_risk_level(
+            str(state.metadata.get("risk_level", "low")),
+            plan.risk_level,
+        )
+        if plan.missing_slots:
+            state.metadata["missing_slots"] = plan.missing_slots
+
     async def _case_binding(self, state: AgentState) -> None:
         auth = _auth_from_state(state)
         latest = state.messages[-1].content
+        if state.intent == "closing":
+            case = _active_case_for_conversation(
+                self.repository,
+                state.conversation_id,
+                auth.user_id,
+            )
+            if case:
+                state.case_id = case["id"]
+                state.task_id = case.get("current_task_id")
+                state.metadata["latest_case"] = case
+            return
         case = self.repository.create_or_get_case(
             user_id=auth.user_id,
             tenant_id=auth.tenant_id,
@@ -351,6 +385,10 @@ class AgentOrchestrator:
         state.metadata["latest_case"] = case
 
     async def _retrieve_policy(self, state: AgentState) -> None:
+        if state.intent == "closing":
+            state.retrieved_docs = []
+            state.draft_answer = "用户希望结束本次会话。"
+            return
         query = state.messages[-1].content
         category = {
             "refund": "refund",
@@ -369,15 +407,20 @@ class AgentOrchestrator:
             state.draft_answer = "知识库暂无直接命中，需要结合业务工具或人工客服处理。"
 
     async def _business_action(self, state: AgentState) -> None:
-        latest = state.messages[-1].content
         auth = _auth_from_state(state)
+        plan = state.action_plan
         order_id = state.metadata.get("order_id")
-        if state.intent in {"order", "refund", "invoice"} and not order_id:
-            latest_order = self.repository.latest_order_for_user(auth.user_id)
-            order_id = latest_order.id if latest_order else ""
-            state.metadata["order_id"] = order_id
-            if state.case_id and order_id:
-                self.repository.update_case(state.case_id, {"related_order_id": order_id})
+        if order_id and state.case_id:
+            self.repository.update_case(state.case_id, {"related_order_id": order_id})
+        if state.intent == "closing":
+            await self._close_conversation_work(state)
+            return
+        if plan and plan.missing_slots:
+            state.metadata["tool_summary"] = "为了避免误操作，请提供需要处理的订单号。"
+            return
+        if plan and not plan.required_tools and state.intent in {"order", "refund", "invoice"}:
+            state.metadata["tool_summary"] = "本轮是政策咨询，无需读取具体订单。"
+            return
         if state.intent in {"faq", "unknown"}:
             state.metadata["tool_summary"] = "本轮无需业务工具，基于知识库回复。"
             return
@@ -385,9 +428,17 @@ class AgentOrchestrator:
             state.metadata["needs_ticket"] = True
             state.metadata["tool_summary"] = "用户主动要求人工接管。"
             return
-        if not order_id and state.intent in {"order", "refund", "invoice"}:
+        if state.intent == "privacy" and not order_id:
             state.metadata["needs_ticket"] = True
-            state.metadata["tool_summary"] = "未找到可处理的订单号。"
+            state.metadata["risk_level"] = "high"
+            state.metadata["tool_summary"] = "请求涉及隐私信息，缺少可校验订单号，转人工留痕。"
+            return
+        if state.intent == "ticket" and not order_id:
+            state.metadata["needs_ticket"] = True
+            state.metadata["tool_summary"] = "售后异常需要人工工单跟进，本轮不读取具体订单。"
+            return
+        if not order_id and state.intent in {"order", "refund", "invoice"}:
+            state.metadata["tool_summary"] = "为了避免误操作，请提供需要处理的订单号。"
             return
 
         if state.intent == "invoice":
@@ -410,7 +461,7 @@ class AgentOrchestrator:
                 idempotency_key=f"refund-check:{auth.user_id}:{order_id}",
             )
             eligible = bool((check.result or {}).get("eligible")) if check.success else False
-            wants_create = any(word in latest for word in ("申请", "我要", "帮我", "退货", "退款"))
+            wants_create = bool(plan and plan.requires_confirmation)
             if eligible and wants_create:
                 pending = {
                     "tool": "create_refund",
@@ -421,6 +472,9 @@ class AgentOrchestrator:
                     "idempotency_key": f"refund-create:{auth.user_id}:{order_id}",
                     "summary": _summarize_tool(check),
                     "risk_level": "medium",
+                    "mode": "dry_run",
+                    "estimated_effect": "将创建退款申请，不会立即退回资金。",
+                    "requires_confirmation": True,
                 }
                 task = self.repository.create_task(
                     case_id=state.case_id or "",
@@ -463,6 +517,32 @@ class AgentOrchestrator:
             f"{state.metadata.get('tool_summary', '')} 请等待用户确认任务 {state.task_id}。"
         ).strip()
 
+    async def _close_conversation_work(self, state: AgentState) -> None:
+        resolution = "用户主动结束本次会话"
+        state.metadata["tool_summary"] = resolution
+        if not state.case_id:
+            return
+        for task in self.repository.list_tasks(case_id=state.case_id, status="pending"):
+            self.repository.update_task(
+                task["id"],
+                {
+                    "status": "cancelled",
+                    "result": {"reason": "customer_closed_conversation"},
+                },
+            )
+        case = self.repository.close_case(state.case_id, resolution)
+        ticket_id = (case or {}).get("related_ticket_id")
+        if ticket_id:
+            self.repository.update_ticket(
+                ticket_id,
+                {
+                    "status": "resolved",
+                    "resolution_type": "customer_closed_conversation",
+                    "closed_reason": resolution,
+                },
+            )
+        state.metadata["latest_case"] = self.repository.get_case(state.case_id) or case
+
     async def _human_handoff(self, state: AgentState) -> None:
         auth = _auth_from_state(state)
         latest = state.messages[-1].content
@@ -470,7 +550,7 @@ class AgentOrchestrator:
         description = (
             f"用户问题：{latest}\n"
             f"系统摘要：{state.metadata.get('tool_summary', '')}\n"
-            f"Case：{state.case_id or '-'}"
+            f"服务案件：{state.case_id or '-'}"
         )
         tool_name = (
             "handoff_to_human"
@@ -523,6 +603,9 @@ class AgentOrchestrator:
         state.guardrail_result = check_output_safety(candidate)
 
     async def _answer_composer(self, state: AgentState) -> None:
+        if state.intent == "closing":
+            state.final_answer = "好的，本次会话已结束。如后续还需要帮助，随时再联系我。"
+            return
         if state.pending_confirmation:
             state.final_answer = (
                 "退款资格已校验通过，但创建退款属于有副作用操作。"
@@ -540,14 +623,14 @@ class AgentOrchestrator:
         tool_summary = state.metadata.get("tool_summary", "")
         citations = ", ".join(doc.source for doc in state.retrieved_docs[:2]) or "知识库"
         system_prompt = (
-            "你是电商售后智能客服。回答必须简洁、可靠，基于知识库、Case状态和工具结果，"
+            "你是电商售后智能客服。回答必须简洁、可靠，基于知识库、服务案件状态和工具结果，"
             "不要编造。如果需要确认或人工处理，要明确下一步动作。"
         )
         user_prompt = (
             f"用户画像：{state.user_profile}\n"
             f"用户问题：{state.messages[-1].content}\n"
             f"意图：{state.intent}\n"
-            f"Case：{state.case_id}\n"
+            f"服务案件：{state.case_id}\n"
             f"知识库草稿：{state.draft_answer}\n"
             f"工具结果：{tool_summary}\n"
             f"引用来源：{citations}\n"
@@ -564,7 +647,7 @@ class AgentOrchestrator:
 
     async def _memory_writer(self, state: AgentState) -> None:
         state.metadata["memory_summary"] = (
-            f"最近意图={state.intent}; Case={state.case_id or '无'}; "
+            f"最近意图={state.intent}; 服务案件={state.case_id or '无'}; "
             f"Task={state.task_id or '无'}; 订单={state.metadata.get('order_id', '无')}; "
             f"工具={','.join(call.name for call in state.tool_calls[-3:]) or '无'}"
         )
@@ -620,6 +703,7 @@ class AgentOrchestrator:
             resume_token=state.resume_token,
             answer=state.final_answer,
             intent=state.intent,
+            action_plan=asdict(state.action_plan) if state.action_plan else None,
             citations=[asdict(doc) for doc in state.retrieved_docs[:3]],
             tool_calls=[asdict(call) for call in state.tool_calls],
             guardrail=asdict(state.guardrail_result)
@@ -636,8 +720,13 @@ class AgentOrchestrator:
             return f"intent={state.intent}"
         if name == "input_policy":
             return state.guardrail_result.reason if state.guardrail_result else "not_checked"
+        if name == "action_planner" and state.action_plan:
+            plan = state.action_plan
+            tools = ",".join(plan.required_tools) or "none"
+            missing = ",".join(plan.missing_slots) or "none"
+            return f"tools={tools}; missing={missing}; risk={plan.risk_level}"
         if name == "case_binding":
-            return f"case={state.case_id}"
+            return f"服务案件={state.case_id}"
         if name == "retrieve_policy":
             return f"retrieved={len(state.retrieved_docs)}"
         if name == "tool_policy":
@@ -663,6 +752,27 @@ def _auth_from_state(state: AgentState) -> AuthContext:
         permissions=tuple(payload.get("permissions") or AuthContext("anonymous").permissions),
         source=str(payload.get("source") or "state"),
     )
+
+
+def _active_case_for_conversation(
+    repository: DemoRepository,
+    conversation_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    return next(
+        (
+            case
+            for case in repository.list_cases(user_id=user_id)
+            if case.get("conversation_id") == conversation_id
+            and case.get("status") not in {"resolved", "closed"}
+        ),
+        None,
+    )
+
+
+def _max_risk_level(current: str, planned: str) -> str:
+    order = {"low": 0, "medium": 1, "high": 2}
+    return current if order.get(current, 0) >= order.get(planned, 0) else planned
 
 
 def _summarize_tool(call: ToolCallRecord) -> str:

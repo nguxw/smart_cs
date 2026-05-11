@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 
 import type {
+  ActionPlan,
   AgentStep,
   CaseTask,
   ChatMessage,
@@ -19,6 +20,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [actionPlan, setActionPlan] = useState<ActionPlan | null>(null);
   const [citations, setCitations] = useState<Citation[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
   const [currentCase, setCurrentCase] = useState<SupportCase | null>(null);
@@ -45,7 +47,10 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
     [agentSteps]
   );
 
-  const loadConversation = useCallback(async (nextConversationId: string) => {
+  const loadConversation = useCallback(async (
+    nextConversationId: string,
+    options?: { preserveRunArtifacts?: boolean }
+  ) => {
     const [snapshot, state] = await Promise.all([
       fetchJson<ConversationSnapshot>(`${API_BASE}/api/conversations/${nextConversationId}`),
       fetchJson<StreamState>(`${API_BASE}/api/conversations/${nextConversationId}/stream-state`)
@@ -56,6 +61,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
     const latestTask = [...(snapshot.tasks ?? [])].sort((left, right) =>
       right.updated_at.localeCompare(left.updated_at)
     )[0] ?? null;
+    setConversationId(nextConversationId);
     setConversationSnapshot(snapshot);
     setStreamState(state);
     setMessages(
@@ -65,8 +71,10 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
         )
         .map((message) => ({ role: message.role, content: message.content }))
     );
-    setAgentSteps(snapshot.agent_steps ?? []);
-    setToolCalls(snapshot.tool_calls ?? []);
+    if (!options?.preserveRunArtifacts) {
+      setAgentSteps(snapshot.agent_steps ?? []);
+      setToolCalls(snapshot.tool_calls ?? []);
+    }
     setCurrentCase(latestCase);
     setCurrentTask(latestTask);
   }, []);
@@ -82,6 +90,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
         { role: "assistant", content: "" }
       ]);
       setAgentSteps([]);
+      setActionPlan(null);
       setCitations([]);
       setToolCalls([]);
       setPendingConfirmation(null);
@@ -98,6 +107,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
             });
           },
           onAgentStep: (step) => setAgentSteps((current) => [...current, step]),
+          onActionPlan: (plan) => setActionPlan(plan),
           onCitation: (doc) =>
             setCitations((current) =>
               current.some((item) => item.id === doc.id) ? current : [...current, doc]
@@ -109,12 +119,20 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
             setPendingConfirmation(payload.pending_confirmation ?? null);
           },
           onFinal: (payload) => {
+            setActionPlan(payload.action_plan ?? null);
             setConversationId(payload.conversation_id);
-            window.setTimeout(() => void loadConversation(payload.conversation_id), 180);
+            window.setTimeout(
+              () => void loadConversation(payload.conversation_id, { preserveRunArtifacts: true }),
+              180
+            );
           },
           onError: (messageText) => setError(messageText)
         });
-        await onAfterMutation?.();
+        try {
+          await onAfterMutation?.();
+        } catch (cause) {
+          console.warn("Post-chat refresh failed", cause);
+        }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Chat request failed");
       } finally {
@@ -152,6 +170,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
     setConversationId(null);
     setMessages([]);
     setAgentSteps([]);
+    setActionPlan(null);
     setCitations([]);
     setToolCalls([]);
     setCurrentCase(null);
@@ -166,6 +185,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
     conversationId,
     messages,
     agentSteps,
+    actionPlan,
     citations,
     toolCalls,
     currentCase,
@@ -180,6 +200,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
     agentLatency,
     send,
     approveTask,
+    loadConversation,
     reset
   };
 }

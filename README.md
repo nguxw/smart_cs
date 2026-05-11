@@ -1,65 +1,96 @@
 # SmartCS ResolutionOps Console
 
-SmartCS ResolutionOps Console is a resume-ready full-stack AI customer support project for e-commerce after-sales workflows. It demonstrates a Python/FastAPI agent runtime, service-case tracking, RAG knowledge search, governed business tool execution, conversation memory, guardrails, observability, and an evaluation harness, with a React operations console for live demos.
+[Chinese documentation](docs/README.zh-CN.md) | [Resume notes](docs/resume_notes.md) | [MIT License](LICENSE)
 
-## Highlights
+SmartCS is a local-first, full-stack AI customer support operations console for e-commerce after-sales workflows. It packages a FastAPI agent runtime, governed business tools, service-case tracking, RAG knowledge retrieval, human confirmation, observability, and deterministic evaluation into one resume-ready project.
 
-- Workflow contract: `router`, `input_policy`, `case_binding`, `retrieve_policy`, `tool_policy`, `human_confirm`, `human_handoff`, `guardrail`, `compose_answer`, `memory_writer`.
-- Case operations: service cases, pending customer confirmations, task status, ticket linkage, and tool-audit evidence.
-- Agent Harness: deterministic local evals for intent accuracy, tool selection, citation hit rate, PII leakage, and latency.
-- Tool layer: MCP-style business tools for orders, refunds, invoices, tickets, and human handoff.
-- Data layer: PostgreSQL persists orders, refunds, tickets, conversations, messages, agent steps, and tool traces.
-- Redis: short-term conversation memory, SSE stream state, and per-user rate limiting.
-- Qdrant: vector knowledge retrieval with deterministic local embeddings and metadata filters.
-- Operations frontend: conversation handling, Case ledger, task/audit drill-down, ticket queue, knowledge management, and eval reports.
-- Runnable without API keys: mock LLM and in-memory stores by default; OpenAI-compatible APIs, PostgreSQL, Redis, and Qdrant are configurable.
+The project runs without API keys in mock mode, but it can also connect to OpenAI-compatible LLM endpoints, PostgreSQL, Redis, and Qdrant for realistic demos.
 
-## Quick Start With Conda
+## Screenshots
 
-### One-click Start on Windows
+### Agent Desk
 
-Copy `.env.example` to `.env` and fill your API key if you want real
-OpenAI-compatible model calls. `.env` is ignored by git. Without `.env`, the app
-starts in mock LLM mode.
+![SmartCS agent desk](docs/assets/screenshots/desk.png)
+
+### Human Ticket Queue
+
+![SmartCS ticket queue](docs/assets/screenshots/tickets.png)
+
+### AgentOps Runtime
+
+![SmartCS AgentOps runtime](docs/assets/screenshots/system.png)
+
+## Why It Is Interesting
+
+- Explicit agent workflow: `router -> input_policy -> action_planner -> case_binding -> retrieve_policy -> tool_policy -> human_confirm -> human_handoff -> guardrail -> compose_answer -> memory_writer`.
+- ActionPlan before execution: every turn records intent, confidence, slots, required tools, missing slots, risk level, confirmation needs, and handoff requirements.
+- Governed tool runtime: refund creation and handoff tools are wrapped with risk levels, confirmation boundaries, idempotency keys, authorization context, and audit logs.
+- CaseOps data model: service cases, pending customer-confirmation tasks, linked tickets, conversations, agent steps, tool calls, and tool-audit evidence.
+- RAG layer: seeded knowledge documents, local deterministic embeddings by default, optional sentence-transformers embeddings, Qdrant storage, metadata filters, reranking, and grounding scores.
+- Agent evaluation harness: deterministic local regression cases for intent, tool selection, tool arguments, missing slots, forbidden tool calls, RAG grounding, PII leakage, handoff precision, task success, and latency.
+- Operations console: React pages for live chat handling, case ledger, ticket queue, knowledge operations, release gates, and AgentOps runtime metadata.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  U["Customer / Agent"] --> FE["React ResolutionOps Console"]
+  FE --> API["FastAPI SSE API"]
+  API --> WF["Agent Orchestrator"]
+  WF --> PLAN["ActionPlan"]
+  WF --> RAG["RAG Retrieval"]
+  WF --> TOOLS["ToolRuntime + ToolPolicy"]
+  TOOLS --> MCP["MCP-style Business Tools"]
+  MCP --> PG["PostgreSQL / In-memory Repository"]
+  API --> REDIS["Redis / In-memory Runtime"]
+  RAG --> QDRANT["Qdrant / In-memory Knowledge Store"]
+  WF --> EVAL["Evaluation Harness"]
+```
+
+## Tech Stack
+
+- Backend: Python 3.10+, FastAPI, Pydantic, LangGraph-compatible workflow metadata, PostgreSQL adapter, Redis adapter, Qdrant adapter.
+- Frontend: React 18, TypeScript, Vite, lucide-react, custom operations-console UI.
+- Agent layer: deterministic mock LLM, OpenAI-compatible chat-completions client, business-tool registry, policy runtime, guardrails, eval harness.
+- Infrastructure: Docker Compose for PostgreSQL, Redis, Qdrant, Jaeger, Prometheus, and Grafana.
+
+## Quick Start
+
+### Windows One-Command Demo
 
 ```powershell
 Copy-Item .env.example .env
-.\start_smartcs.ps1
+.\start_smartcs.ps1 -Mock
 ```
 
-Or double-click:
-
-```text
-start_smartcs.bat
-```
+The script creates or reuses the project-local Conda environment, starts PostgreSQL, Redis, Qdrant, FastAPI, and Vite, seeds demo data, and prints the local URLs.
 
 Useful options:
 
 ```powershell
-.\start_smartcs.ps1 -NoBrowser      # do not open browser
-.\start_smartcs.ps1 -SkipSeed       # skip idempotent demo data seed
-.\start_smartcs.ps1 -Mock           # force mock LLM mode
-.\start_smartcs.ps1 -NoInstall      # skip dependency checks
+.\start_smartcs.ps1 -Mock -NoBrowser
+.\start_smartcs.ps1 -Mock -NoDocker -SkipSeed
+.\start_smartcs.ps1 -NoInstall
 ```
 
-The script starts PostgreSQL, Redis, Qdrant, FastAPI, and Vite, then checks:
+Default local URLs:
 
 - Frontend: `http://127.0.0.1:5173`
-- Backend: `http://127.0.0.1:8000/docs`
-- Qdrant: `http://127.0.0.1:6333/dashboard`
+- Backend API docs: `http://127.0.0.1:8000/docs`
+- Qdrant dashboard: `http://127.0.0.1:6333/dashboard`
+
+### Manual Local Run
 
 ```powershell
-# Create a project-local Conda environment
-$env:CONDA_PKGS_DIRS='F:\Project\Smart_CS\.conda_pkgs'
+# Create the local environment once
+$env:CONDA_PKGS_DIRS="$PWD\.conda_pkgs"
 conda env create --prefix .\.conda --file environment.yml
 
-# Optional: configure a real OpenAI-compatible gateway in an untracked .env
-# LLM_PROVIDER=openai
-# OPENAI_API_KEY=your_key
-# OPENAI_API_BASE=https://your-compatible-endpoint/v1
-# MODEL_NAME=your_model
-
 # Backend
+$env:LLM_PROVIDER="mock"
+$env:DATA_BACKEND="memory"
+$env:REDIS_BACKEND="memory"
+$env:KB_BACKEND="memory"
 .\.conda\python.exe -m uvicorn app.api.main:app --app-dir backend --reload --port 8000
 ```
 
@@ -67,56 +98,40 @@ In another terminal:
 
 ```powershell
 cd frontend
-$env:npm_config_cache='F:\Project\Smart_CS\.npm_cache'
+$env:npm_config_cache="..\.npm_cache"
 ..\.conda\npm.cmd install
 ..\.conda\node.exe node_modules\vite\bin\vite.js --host 127.0.0.1
 ```
 
-Open `http://localhost:5173`.
+Open `http://127.0.0.1:5173`.
 
-## Run With Real Databases
+## Real Services Mode
 
 ```powershell
-# Start PostgreSQL, Redis, and Qdrant
 docker compose up -d postgres redis qdrant
 
-# Option A: use the real data stores from local uvicorn
-$env:DATA_BACKEND='postgres'
-$env:REDIS_BACKEND='redis'
-$env:KB_BACKEND='qdrant'
-$env:DATABASE_URL='postgresql+psycopg://smartcs:smartcs@localhost:5432/smartcs'
-$env:REDIS_URL='redis://localhost:6379/0'
-$env:QDRANT_URL='http://localhost:6333'
+$env:DATA_BACKEND="postgres"
+$env:REDIS_BACKEND="redis"
+$env:KB_BACKEND="qdrant"
+$env:DATABASE_URL="postgresql+psycopg://smartcs:smartcs@localhost:5432/smartcs"
+$env:REDIS_URL="redis://localhost:6379/0"
+$env:QDRANT_URL="http://localhost:6333"
+
+.\.conda\python.exe scripts\seed_demo_data.py
 .\.conda\python.exe -m uvicorn app.api.main:app --app-dir backend --reload --port 8000
-
-# Option B: Windows helper for the same local database setup
-.\run_backend_db.bat
 ```
 
-`run_backend_db.bat` only sets local database backends. If an untracked `.env` contains
-`LLM_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_API_BASE`, and `MODEL_NAME`, the same script
-will use the real OpenAI-compatible model as well.
+To use a real model, copy `.env.example` to `.env` and set:
 
-Seed richer synthetic demo data after the databases are running:
-
-```powershell
-.\run_seed_demo_data.bat
+```dotenv
+LLM_PROVIDER=openai-compatible
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.openai.com/v1
+MODEL_NAME=gpt-4o-mini
+MOCK_MODE=false
 ```
 
-The seed is idempotent. It upserts synthetic users, orders, refunds, tickets, conversation
-traces, and Qdrant knowledge-base documents without clearing existing runtime data.
-
-`/health` reports the active backends:
-
-```json
-{
-  "repository_backend": "postgresql",
-  "runtime_backend": "redis",
-  "knowledge_backend": "qdrant"
-}
-```
-
-Local verification commands:
+## Verification
 
 ```powershell
 .\.conda\python.exe -m pytest backend
@@ -126,15 +141,39 @@ cd frontend
 ..\.conda\node.exe node_modules\vite\bin\vite.js build
 ```
 
+Unified checks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check_local.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check_local.ps1 -WithServices
+```
+
+RAG retrieval eval:
+
+```powershell
+.\.conda\python.exe -m app.evals.rag_eval --backend memory
+.\.conda\python.exe -m app.evals.rag_eval --backend qdrant
+```
+
 ## API Surface
 
-- `POST /api/chat/stream`: SSE chat stream with `agent_step`, `tool_call`, `citation`, `token`, `final`, and `error` events.
-- `GET /api/conversations/{conversation_id}`: conversation history and agent trace.
-- `GET /api/conversations/{conversation_id}/stream-state`: Redis short memory and stream event state.
-- `GET /api/tickets` and `PATCH /api/tickets/{ticket_id}`: ticket queue.
-- `POST /api/kb/ingest` and `GET /api/kb/search`: knowledge ingestion and search.
-- `POST /api/evals/run` and `GET /api/evals/{run_id}`: eval harness runs and reports.
+- `POST /api/chat/stream`: SSE events for `agent_step`, `action_plan`, `tool_call`, `citation`, `token`, `final`, and `error`.
+- `GET /api/conversations/{conversation_id}`: conversation history, agent steps, tool calls, linked cases, and tasks.
+- `GET /api/conversations/{conversation_id}/stream-state`: Redis-backed short memory and stream state.
+- `GET /api/cases` and `GET /api/cases/{case_id}`: service-case ledger and task/audit detail.
+- `POST /api/tasks/{task_id}/confirm`: human confirmation for side-effect tools.
+- `GET /api/tickets` and `PATCH /api/tickets/{ticket_id}`: human ticket queue.
+- `POST /api/kb/ingest` and `GET /api/kb/search`: knowledge ingestion and retrieval.
+- `POST /api/evals/run` and `GET /api/evals/{run_id}`: regression eval runs and reports.
+- `GET /api/harness/manifest`: release gates, workflow contracts, tool metadata, and harness definition.
 
-## Resume Framing
+## Repository Hygiene
 
-Built a full-stack AI customer support operations console for e-commerce after-sales scenarios. The backend uses FastAPI and an explicit orchestrator sequence, with a LangGraph migration contract exposed as metadata, to coordinate routing, RAG retrieval, governed business tools, human confirmation, guardrail review, memory writing, and streaming answer composition. Added an evaluation harness that tracks intent accuracy, tool-call correctness, citation grounding, PII leakage, and latency across synthetic support cases.
+- Secrets belong in `.env`; `.env.example` is safe to commit.
+- Local environments, dependency caches, build outputs, runtime data, logs, and IDE files are ignored by `.gitignore` and `.dockerignore`.
+- README screenshots live in `docs/assets/screenshots/` and are generated from the running local app.
+- Resume-facing talking points live in `docs/resume_notes.md` and `docs/resume.md`.
+
+## License
+
+This project is released under the [MIT License](LICENSE).

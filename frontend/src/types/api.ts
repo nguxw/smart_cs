@@ -9,6 +9,18 @@ export type AgentStep = {
   elapsed_ms?: number;
 };
 
+export type ActionPlan = {
+  intent: string;
+  confidence: number;
+  slots?: Record<string, unknown>;
+  required_tools?: string[];
+  missing_slots?: string[];
+  risk_level?: "low" | "medium" | "high";
+  requires_confirmation?: boolean;
+  requires_handoff?: boolean;
+  reason?: string;
+};
+
 export type Citation = {
   id: string;
   title: string;
@@ -57,6 +69,12 @@ export type Ticket = {
   csat_score?: number | null;
   created_at: string;
   updated_at?: string;
+};
+
+export type TicketThread = {
+  ticket: Ticket;
+  case?: SupportCase | null;
+  conversation?: ConversationSnapshot | null;
 };
 
 export type SupportCase = {
@@ -203,6 +221,9 @@ export type PendingConfirmation = {
   arguments?: Record<string, unknown>;
   summary?: string;
   risk_level?: string;
+  mode?: string;
+  estimated_effect?: string;
+  requires_confirmation?: boolean;
   task_id?: string;
   idempotency_key?: string;
 };
@@ -216,6 +237,7 @@ export type StreamFinal = {
   pending_confirmation?: PendingConfirmation | null;
   resume_token?: string | null;
   intent?: string;
+  action_plan?: ActionPlan | null;
   graph_path?: string[];
 };
 

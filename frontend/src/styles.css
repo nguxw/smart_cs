@@ -1080,6 +1080,63 @@ pre {
   background: var(--surface-2);
 }
 
+.plan-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.plan-headline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-headline span,
+.plan-grid span {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.plan-headline strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-0);
+  font-size: 18px;
+}
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.plan-grid div {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.plan-grid strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-1);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.plan-card p {
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .action-card span {
   color: var(--ink-2);
   font-size: 12px;
@@ -1390,19 +1447,32 @@ pre {
 .thread-row {
   min-height: 46px;
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: minmax(118px, 0.24fr) minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfe;
+  overflow: hidden;
 }
 
 .thread-row strong {
+  min-width: 0;
   color: var(--ink-0);
   font-size: 13px;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-row .status-chip {
+  min-width: 0;
+  max-width: 100%;
+  justify-content: flex-start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 1180px) {
@@ -2410,6 +2480,1114 @@ textarea {
   .ticket-row,
   .case-row,
   .thread-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Final viewport layout override: keep operator controls visible on desktop. */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  grid-template-columns: 232px minmax(0, 1fr);
+}
+
+.sidebar,
+.workspace {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar {
+  gap: 14px;
+  padding: 16px 12px;
+}
+
+.brand {
+  flex: 0 0 auto;
+}
+
+.nav-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.storage-stack {
+  flex: 0 0 auto;
+  margin-top: auto;
+  gap: 6px;
+}
+
+.storage-pill {
+  min-height: 42px;
+  padding: 8px 10px;
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px;
+}
+
+.topbar,
+.notice,
+.metric-grid {
+  flex: 0 0 auto;
+}
+
+.metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.metric {
+  min-height: 74px;
+  padding: 12px;
+}
+
+.metric strong {
+  font-size: 22px;
+}
+
+.workspace > .support-desk-grid,
+.workspace > .agent-queue-grid,
+.workspace > .case-ops-grid,
+.workspace > .knowledge-ops-grid,
+.workspace > .eval-center-grid,
+.workspace > .system-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.support-desk-grid {
+  grid-template-columns: minmax(250px, 0.72fr) minmax(500px, 1.45fr) minmax(330px, 0.92fr);
+  gap: 12px;
+}
+
+.context-rail,
+.conversation-column,
+.action-rail {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.context-rail,
+.action-rail {
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.inspector-stack {
+  display: grid;
+  grid-auto-rows: max-content;
+  gap: 12px;
+  min-height: min-content;
+}
+
+.chat-pane {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane-head,
+.scenario-grid.compact,
+.composer {
+  flex: 0 0 auto;
+}
+
+.pane-head {
+  min-height: 56px;
+}
+
+.scenario-grid.compact {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.scenario {
+  min-height: 58px;
+  padding: 9px 10px;
+}
+
+.messages,
+.messages.dense {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+.messages.dense {
+  padding: 14px;
+}
+
+.composer {
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.composer input {
+  min-width: 0;
+  height: 44px;
+}
+
+.composer button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.action-rail .panel {
+  overflow: visible;
+}
+
+.action-rail .timeline,
+.action-rail .tool-list,
+.action-rail .citation-list {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.plan-grid {
+  gap: 8px;
+}
+
+.plan-grid > div {
+  min-height: 46px;
+  padding: 8px 10px;
+}
+
+.action-card {
+  min-height: 76px;
+}
+
+.agent-queue-grid {
+  grid-template-columns: 148px minmax(360px, 0.82fr) minmax(560px, 1.18fr);
+  gap: 12px;
+}
+
+.case-ops-grid {
+  grid-template-columns: 160px minmax(390px, 0.9fr) minmax(460px, 1.1fr);
+  gap: 12px;
+}
+
+.queue-tabs {
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.queue-tabs button {
+  min-height: 36px;
+}
+
+.ticket-queue,
+.case-ledger {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ticket-list,
+.case-list {
+  min-height: 0;
+  overflow: auto;
+}
+
+.ticket-workbench,
+.case-detail,
+.knowledge-search,
+.knowledge-docs,
+.knowledge-ingest,
+.knowledge-feedback,
+.eval-control,
+.eval-gates,
+.failed-cases,
+.system-health,
+.tool-registry,
+.observability-panel {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ticket-workbench .operation-form {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 0.82fr) minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.ticket-editor .form-section {
+  min-height: 0;
+  overflow: auto;
+}
+
+.case-detail {
+  display: flex;
+  flex-direction: column;
+}
+
+.case-thread,
+.thread-list {
+  min-height: 0;
+  overflow: auto;
+}
+
+.case-thread {
+  flex: 1 1 auto;
+}
+
+.knowledge-ops-grid {
+  grid-template-columns: minmax(540px, 1.22fr) minmax(360px, 0.78fr);
+  grid-template-rows: minmax(0, 1fr) minmax(170px, 0.42fr);
+  grid-template-areas:
+    "search ingest"
+    "docs feedback";
+  gap: 12px;
+}
+
+.knowledge-search {
+  grid-area: search;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.knowledge-docs {
+  grid-area: docs;
+}
+
+.knowledge-ingest {
+  grid-area: ingest;
+}
+
+.knowledge-feedback {
+  grid-area: feedback;
+}
+
+.kb-results,
+.doc-table,
+.feedback-list,
+.knowledge-editor {
+  min-height: 0;
+  overflow: auto;
+}
+
+.knowledge-editor {
+  height: 100%;
+}
+
+.knowledge-editor textarea {
+  min-height: 150px;
+}
+
+.eval-center-grid {
+  grid-template-columns: minmax(420px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    "control report"
+    "gates report"
+    "failed report";
+  gap: 12px;
+}
+
+.eval-control {
+  grid-area: control;
+}
+
+.eval-gates {
+  grid-area: gates;
+}
+
+.failed-cases {
+  grid-area: failed;
+}
+
+.report {
+  grid-area: report;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+}
+
+.gate-list,
+.failed-table {
+  min-height: 0;
+  overflow: auto;
+}
+
+.system-grid.agentops {
+  grid-template-columns: minmax(330px, 0.72fr) minmax(0, 1.28fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "health graph"
+    "registry graph"
+    "observability graph";
+  gap: 12px;
+}
+
+.agentops .system-health {
+  grid-area: health;
+}
+
+.agentops .graph-panel {
+  grid-area: graph;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.agentops .tool-registry {
+  grid-area: registry;
+}
+
+.agentops .observability-panel {
+  grid-area: observability;
+}
+
+.system-health .health-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(50px, auto);
+  gap: 8px;
+  padding: 10px;
+}
+
+.system-health .outcome-item {
+  min-height: 50px;
+  padding: 8px 10px;
+}
+
+.graph-panel .runtime-strip {
+  flex: 0 0 auto;
+  padding: 10px;
+}
+
+.graph-list {
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 10px;
+}
+
+.edge-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+}
+
+.agentops .registry-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: auto;
+}
+
+.agentops .registry-card {
+  min-height: 82px;
+}
+
+.agentops .interface-list {
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+.agentops .interface-row {
+  grid-template-columns: 54px minmax(130px, 0.85fr) minmax(0, 1fr);
+}
+
+/* Module-level density pass: keep each panel content-driven inside the fixed viewport. */
+.ticket-list,
+.case-list,
+.kb-results,
+.doc-table,
+.feedback-list,
+.thread-list,
+.graph-list,
+.registry-grid {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+.case-list {
+  gap: 8px;
+  padding: 10px;
+  grid-auto-rows: minmax(74px, max-content);
+}
+
+.case-row {
+  min-height: 74px;
+  grid-template-columns: minmax(0, 1fr) 76px 86px;
+  gap: 8px;
+  padding: 10px;
+}
+
+.case-row small:not(.status) {
+  display: -webkit-box;
+  max-width: 64ch;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.ticket-list {
+  grid-auto-rows: minmax(68px, max-content);
+  padding: 10px 18px 22px 10px;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.ticket-row {
+  min-height: 68px;
+  width: 100%;
+  max-width: 100%;
+  padding: 9px 10px;
+}
+
+.ticket-row small:not(.status) {
+  display: -webkit-box;
+  max-width: 54ch;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.ticket-row .priority,
+.ticket-row .status {
+  justify-self: end;
+}
+
+.ticket-workbench.panel {
+  display: block;
+}
+
+.ticket-workbench .operation-form {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto auto auto;
+  align-content: start;
+  overflow: auto;
+}
+
+.ticket-editor > .form-section {
+  min-height: 0;
+  overflow: visible;
+}
+
+.ticket-editor > .form-section + .form-section {
+  align-content: start;
+  overflow: visible;
+}
+
+.ticket-editor textarea {
+  min-height: 108px;
+  max-height: 160px;
+}
+
+.ticket-editor .form-footer {
+  border-top: 1px solid var(--line);
+}
+
+.case-detail {
+  display: flex;
+  flex-direction: column;
+}
+
+.case-thread {
+  display: grid;
+  grid-template-rows: repeat(3, max-content);
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+}
+
+.thread-block {
+  min-height: 0;
+}
+
+.case-detail .thread-list {
+  max-height: 180px;
+}
+
+.case-detail .empty-state {
+  min-height: 96px;
+  padding: 16px;
+  place-items: start;
+  justify-items: start;
+  text-align: left;
+}
+
+.case-detail .empty-state svg {
+  width: 20px;
+  height: 20px;
+}
+
+.case-detail .empty-state p {
+  max-width: 100%;
+}
+
+.knowledge-ops-grid {
+  grid-template-columns: minmax(560px, 1.28fr) minmax(400px, 0.72fr);
+  grid-template-rows: minmax(0, 1fr) minmax(190px, 0.34fr);
+}
+
+.knowledge-ingest.panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.knowledge-editor {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  overflow: auto;
+}
+
+.knowledge-fields {
+  align-content: start;
+}
+
+.knowledge-editor label {
+  min-height: 0;
+}
+
+.knowledge-content {
+  min-height: 0;
+  display: grid;
+}
+
+.knowledge-content label {
+  min-height: 0;
+}
+
+.knowledge-editor textarea {
+  height: 220px;
+  min-height: 180px;
+  max-height: 260px;
+  resize: vertical;
+}
+
+.knowledge-editor .form-footer {
+  border-top: 1px solid var(--line);
+}
+
+.kb-results {
+  grid-auto-rows: max-content;
+}
+
+.kb-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.doc-table,
+.feedback-list {
+  align-content: start;
+}
+
+.doc-row,
+.feedback-row {
+  min-height: 50px;
+}
+
+/* Edge-safe component pass: consistent inner padding and text clipping. */
+.action-rail .action-card {
+  margin: 10px 10px 0;
+}
+
+.action-rail .decision-row {
+  margin: 10px;
+}
+
+.action-rail .risk-strip {
+  margin: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.action-rail .panel > .empty-inline,
+.knowledge-docs > .empty-inline,
+.knowledge-feedback > .empty-inline {
+  margin: 12px;
+}
+
+.ticket-row {
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) 72px 62px;
+}
+
+.ticket-row > span,
+.ticket-row strong,
+.ticket-row em,
+.ticket-row small:not(.status) {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.ticket-row strong,
+.ticket-row em,
+.ticket-row small:not(.status) {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+
+.ticket-row small:not(.status) {
+  margin-top: 0;
+  -webkit-line-clamp: 1;
+}
+
+.ticket-row .priority,
+.ticket-row .status {
+  max-width: 100%;
+  justify-self: end;
+}
+
+.knowledge-docs .doc-table,
+.knowledge-feedback .feedback-list {
+  padding: 12px;
+  gap: 10px;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.knowledge-docs .doc-row,
+.knowledge-feedback .feedback-row {
+  width: 100%;
+  max-width: 100%;
+}
+
+.doc-row > *,
+.feedback-row > * {
+  min-width: 0;
+}
+
+.doc-row strong,
+.doc-row span,
+.doc-row em,
+.feedback-row strong,
+.feedback-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-row p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.context-rail {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+.customer-context-panel,
+.case-context-panel {
+  height: auto;
+}
+
+.case-context-panel .case-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.case-context-panel .fact-row {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: center;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.case-context-panel .fact-row:first-child {
+  grid-column: 1 / -1;
+  min-height: 60px;
+  background: #ffffff;
+}
+
+.case-context-panel .fact-row:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.case-context-panel .fact-row span {
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.case-context-panel .fact-row strong {
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-context-panel .fact-row:first-child strong {
+  font-size: 15px;
+}
+
+/* Ticket workbench layout: use remaining space as editable reply area. */
+.ticket-workbench.panel {
+  display: block;
+}
+
+.ticket-workbench .ticket-editor {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows:
+    auto
+    auto
+    auto
+    minmax(86px, 0.3fr)
+    minmax(230px, 1fr)
+    minmax(120px, 0.42fr)
+    auto;
+  overflow: hidden;
+}
+
+.ticket-editor > .form-section {
+  min-height: 0;
+  overflow: visible;
+}
+
+.ticket-summary-section,
+.ticket-reply-section {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ticket-summary-section label,
+.ticket-reply-section label {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.ticket-summary-section textarea,
+.ticket-reply-section textarea {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  resize: none;
+}
+
+.ticket-reply-section {
+  border-top: 1px solid var(--line);
+  background: var(--surface-1);
+}
+
+.ticket-thread-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 78%, white);
+  overflow: hidden;
+}
+
+.ticket-thread-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ticket-thread-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.ticket-thread-head span {
+  font-size: 0.74rem;
+  color: var(--ink-2);
+}
+
+.ticket-thread-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
+
+.ticket-thread-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.ticket-thread-actions .subtle-action {
+  min-width: 106px;
+  justify-content: center;
+}
+
+.ticket-thread-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.ticket-thread-message {
+  max-width: min(100%, 620px);
+  display: grid;
+  gap: 5px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  background: var(--surface-1);
+}
+
+.ticket-thread-message span {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--ink-2);
+}
+
+.ticket-thread-message p {
+  color: var(--ink-1);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.ticket-thread-message.user {
+  justify-self: start;
+  border-left: 3px solid var(--blue);
+}
+
+.ticket-thread-message.assistant {
+  justify-self: end;
+  border-right: 3px solid var(--green);
+}
+
+.ticket-thread-list .empty-state {
+  min-height: 96px;
+  padding: 16px;
+}
+
+.ticket-editor .form-footer {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.ticket-editor .form-footer .primary-action {
+  min-width: 132px;
+  justify-content: center;
+}
+
+.ticket-editor .form-footer .primary-action,
+.ticket-editor .form-footer .subtle-action {
+  min-width: 112px;
+  padding: 0 14px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.ticket-editor .form-footer .subtle-action.danger {
+  min-width: 116px;
+}
+
+@media (max-width: 1180px) {
+  body {
+    overflow: auto;
+  }
+
+  #root,
+  .app-shell,
+  .sidebar,
+  .workspace {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .workspace > .support-desk-grid,
+  .workspace > .agent-queue-grid,
+  .workspace > .case-ops-grid,
+  .workspace > .knowledge-ops-grid,
+  .workspace > .eval-center-grid,
+  .workspace > .system-grid {
+    height: auto;
+    overflow: visible;
+    grid-template-columns: 1fr;
+    grid-template-areas: none;
+  }
+
+  .context-rail,
+  .conversation-column,
+  .action-rail,
+  .ticket-queue,
+  .ticket-workbench,
+  .case-ledger,
+  .case-detail,
+  .knowledge-search,
+  .knowledge-docs,
+  .knowledge-ingest,
+  .knowledge-feedback,
+  .eval-control,
+  .eval-gates,
+  .failed-cases,
+  .system-health,
+  .tool-registry,
+  .observability-panel {
+    height: auto;
+    overflow: visible;
+  }
+
+  .chat-pane {
+    min-height: 640px;
+  }
+
+  .knowledge-search,
+  .knowledge-docs,
+  .knowledge-ingest,
+  .knowledge-feedback,
+  .eval-control,
+  .eval-gates,
+  .failed-cases,
+  .report,
+  .agentops .system-health,
+  .agentops .graph-panel,
+  .agentops .tool-registry,
+  .agentops .observability-panel {
+    grid-area: auto;
+  }
+
+  .knowledge-editor,
+  .ticket-workbench .operation-form {
+    height: auto;
+    overflow: visible;
+  }
+
+  .scenario-grid.compact,
+  .metric-grid,
+  .system-health .health-grid,
+  .agentops .registry-grid,
+  .graph-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    min-height: 0;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    padding: 10px;
+  }
+
+  .brand {
+    min-width: 156px;
+  }
+
+  .nav-list {
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow: visible;
+  }
+
+  .storage-stack {
+    display: none;
+  }
+
+  .workspace {
+    padding: 12px;
+  }
+
+  .topbar,
+  .top-actions,
+  .section-head,
+  .ticket-row,
+  .case-row,
+  .thread-row,
+  .agentops .interface-row {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid,
+  .scenario-grid.compact,
+  .case-facts,
+  .runtime-strip,
+  .kb-results,
+  .system-health .health-grid,
+  .agentops .registry-grid,
+  .graph-list,
+  .eval-grid {
     grid-template-columns: 1fr;
   }
 }

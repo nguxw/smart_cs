@@ -9,7 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 from qdrant_client import QdrantClient, models
 
 from app.models.schemas import KnowledgeDoc
-from app.rag.embeddings import DeterministicEmbeddingProvider
+from app.rag.embeddings import DeterministicEmbeddingProvider, EmbeddingProvider
 from app.rag.grounding import annotate_grounding
 from app.rag.knowledge_store import HybridKnowledgeStore, chunk_text
 from app.rag.reranker import rerank_documents
@@ -22,7 +22,7 @@ def stable_embedding(text: str, vector_size: int = 384) -> list[float]:
 
 
 class QdrantKnowledgeStore:
-    """Qdrant-backed vector knowledge store with local deterministic embeddings."""
+    """Qdrant-backed vector knowledge store with pluggable local embeddings."""
 
     backend_name = "qdrant"
 
@@ -31,10 +31,14 @@ class QdrantKnowledgeStore:
         url: str,
         collection_name: str,
         vector_size: int = 384,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.url = url
         self.collection_name = collection_name
-        self.vector_size = vector_size
+        self.embedding_provider = embedding_provider or DeterministicEmbeddingProvider(
+            vector_size=vector_size
+        )
+        self.vector_size = self.embedding_provider.vector_size
         self.client = QdrantClient(url=url, timeout=2, check_compatibility=False)
         self._ensure_collection()
 
@@ -89,7 +93,7 @@ class QdrantKnowledgeStore:
             points.append(
                 models.PointStruct(
                     id=str(uuid5(NAMESPACE_URL, doc_id)),
-                    vector=stable_embedding(f"{title}\n{chunk}", self.vector_size),
+                    vector=self.embedding_provider.embed(f"{title}\n{chunk}"),
                     payload=asdict(doc),
                 )
             )
@@ -123,7 +127,7 @@ class QdrantKnowledgeStore:
         category: str | None = None,
         tags: list[str] | None = None,
     ) -> list[KnowledgeDoc]:
-        query_vector = stable_embedding(query, self.vector_size)
+        query_vector = self.embedding_provider.embed(query)
         query_filter = _build_filter(category=category, tags=tags)
         try:
             response = self.client.query_points(
@@ -180,10 +184,11 @@ def create_qdrant_or_local_store(
     collection_name: str,
     seed_dir: Path,
     vector_size: int = 384,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> QdrantKnowledgeStore | HybridKnowledgeStore:
     try:
         store: QdrantKnowledgeStore | HybridKnowledgeStore
-        store = QdrantKnowledgeStore(url, collection_name, vector_size)
+        store = QdrantKnowledgeStore(url, collection_name, vector_size, embedding_provider)
         store.ping()
         store.ingest_markdown_dir(seed_dir)
         return store

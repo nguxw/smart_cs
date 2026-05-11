@@ -85,7 +85,7 @@ export function SystemPage({
 
       <Card title="观测入口" icon={<Layers3 />} className="observability-panel">
         <div className="interface-list">
-          <Route method="GET" path="/api/cases" detail="Case 队列、状态、风险与当前 Task" />
+          <Route method="GET" path="/api/cases" detail="服务案件队列、状态、风险与当前任务" />
           <Route method="POST" path="/api/tasks/{id}/confirm" detail="确认 pending task 并执行副作用工具" />
           <Route method="GET" path="/api/tool-audits" detail="工具策略、幂等、审计与错误查询" />
           <Route method="POST" path="/api/evals/run" detail="Agent Regression 与发布门禁" />

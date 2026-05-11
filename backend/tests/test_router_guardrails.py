@@ -22,3 +22,6 @@ def test_pii_redaction_and_prompt_injection() -> None:
     assert result.blocked is True
     assert result.requires_human is True
 
+
+def test_classify_closing_intent() -> None:
+    assert classify_intent("结束吧") == "closing"

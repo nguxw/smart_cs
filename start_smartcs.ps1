@@ -17,6 +17,14 @@ $Tmp = Join-Path $Root ".tmp"
 Set-Location $Root
 New-Item -ItemType Directory -Force -Path $Logs, $Tmp | Out-Null
 
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $processPath = [Environment]::GetEnvironmentVariable("Path", "Process")
+    if (![string]::IsNullOrWhiteSpace($processPath)) {
+        [Environment]::SetEnvironmentVariable("PATH", $null, "Process")
+        [Environment]::SetEnvironmentVariable("Path", $processPath, "Process")
+    }
+}
+
 function Write-Step {
     param([string]$Message)
     Write-Host ""
@@ -154,8 +162,8 @@ if ($Mock) {
 }
 elseif (![string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) {
     Set-DefaultEnv "LLM_PROVIDER" "openai-compatible"
-    Set-DefaultEnv "OPENAI_API_BASE" "https://token-plan-cn.xiaomimimo.com/v1"
-    Set-DefaultEnv "MODEL_NAME" "mimo-v2.5-pro"
+    Set-DefaultEnv "OPENAI_API_BASE" "https://api.openai.com/v1"
+    Set-DefaultEnv "MODEL_NAME" "gpt-4o-mini"
     Set-DefaultEnv "LLM_MODEL" $env:MODEL_NAME
     [Environment]::SetEnvironmentVariable("MOCK_MODE", "false", "Process")
 }

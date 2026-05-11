@@ -28,9 +28,9 @@ export function CustomerProfile({
           <p>{user.note}</p>
         </div>
       </Card>
-      <Card title="服务 Case" icon={<History />} className="case-context-panel">
+      <Card title="服务案件" icon={<History />} className="case-context-panel">
         <div className="case-summary compact-facts">
-          <Info label="Case" value={supportCase?.id ?? "未创建"} />
+          <Info label="案件号" value={supportCase?.id ?? "未创建"} />
           <Info label="状态" value={supportCase?.status ?? "idle"} />
           <Info label="类别" value={supportCase?.category ?? "-"} />
           <Info label="风险" value={supportCase?.risk_level ?? "low"} />

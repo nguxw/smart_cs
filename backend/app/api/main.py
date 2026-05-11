@@ -141,6 +141,7 @@ def build_harness_manifest() -> dict[str, Any]:
             "messages",
             "user_profile",
             "intent",
+            "action_plan",
             "retrieved_docs",
             "tool_calls",
             "draft_answer",
@@ -157,6 +158,7 @@ def build_harness_manifest() -> dict[str, Any]:
         "event_contract": {
             "stream": [
                 "agent_step",
+                "action_plan",
                 "case_update",
                 "task_update",
                 "tool_call",
@@ -205,6 +207,7 @@ def build_harness_manifest() -> dict[str, Any]:
                 "evidence": [
                     "router",
                     "input_policy",
+                    "action_planner",
                     "case_binding",
                     "retrieve_policy",
                     "tool_policy",
@@ -238,6 +241,8 @@ def build_harness_manifest() -> dict[str, Any]:
             "intent_accuracy": 0.90,
             "tool_accuracy": 0.90,
             "tool_argument_accuracy": 0.90,
+            "missing_slot_accuracy": 0.90,
+            "forbidden_tool_violation_rate": 0.0,
             "citation_hit_rate": 0.85,
             "groundedness": 0.80,
             "pii_leakage_rate": 0.0,
@@ -436,6 +441,27 @@ async def get_stream_state(conversation_id: str):
 @app.get("/api/tickets")
 async def list_tickets():
     return {"tickets": repository.list_tickets()}
+
+
+@app.get("/api/tickets/{ticket_id}/thread")
+async def get_ticket_thread(ticket_id: str):
+    ticket = next((row for row in repository.list_tickets() if row["id"] == ticket_id), None)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    linked_case = next(
+        (
+            row
+            for row in repository.list_cases()
+            if row.get("related_ticket_id") == ticket_id
+        ),
+        None,
+    )
+    conversation = (
+        repository.conversation_snapshot(linked_case["conversation_id"])
+        if linked_case
+        else None
+    )
+    return {"ticket": ticket, "case": linked_case, "conversation": conversation}
 
 
 @app.patch("/api/tickets/{ticket_id}")

@@ -1,0 +1,9 @@
+{"id":"rag_refund_001","query":"七天无理由退款规则是什么","expected_sources":["refund_policy.md"]}
+{"id":"rag_refund_002","query":"超过退款窗口还能退货吗","expected_sources":["refund_policy.md"]}
+{"id":"rag_invoice_001","query":"发票怎么下载","expected_sources":["invoice_policy.md"]}
+{"id":"rag_invoice_002","query":"电子发票开好后在哪里下载","expected_sources":["invoice_policy.md"]}
+{"id":"rag_shipping_001","query":"物流一直不更新怎么办","expected_sources":["shipping_exception.md","order_logistics.md"]}
+{"id":"rag_shipping_002","query":"快递超过48小时没有更新","expected_sources":["shipping_exception.md"]}
+{"id":"rag_privacy_001","query":"可以查询别人订单地址吗","expected_sources":["account_privacy.md"]}
+{"id":"rag_exchange_001","query":"换货流程怎么处理","expected_sources":["exchange_policy.md"]}
+{"id":"rag_warranty_001","query":"保修售后怎么申请","expected_sources":["support_warranty.md"]}

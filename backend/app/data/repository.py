@@ -341,6 +341,7 @@ class DemoRepository:
             if ticket is None:
                 return None
             previous_human_reply = ticket.human_reply
+            changed_fields: set[str] = set()
             for field_name in (
                 "status",
                 "priority",
@@ -362,12 +363,26 @@ class DemoRepository:
             ):
                 if field_name in payload and payload[field_name] is not None:
                     setattr(ticket, field_name, payload[field_name])
+                    changed_fields.add(field_name)
             ticket.updated_at = utc_now()
             linked_cases = [
                 case for case in self.cases.values() if case.related_ticket_id == ticket_id
             ]
-            if ticket.human_reply and ticket.human_reply != previous_human_reply:
-                for case in linked_cases:
+            human_reply_changed = bool(
+                ticket.human_reply and ticket.human_reply != previous_human_reply
+            )
+            for case in linked_cases:
+                case_changed = False
+                if "priority" in changed_fields:
+                    case.priority = ticket.priority
+                    case_changed = True
+                if "category" in changed_fields:
+                    case.category = ticket.category
+                    case_changed = True
+                if "agent_summary" in changed_fields and ticket.agent_summary:
+                    case.summary = ticket.agent_summary[:180]
+                    case_changed = True
+                if human_reply_changed:
                     record = self.conversations.get(case.conversation_id)
                     if record:
                         record.messages.append(
@@ -375,12 +390,31 @@ class DemoRepository:
                         )
                         record.updated_at = utc_now()
                     case.summary = ticket.human_reply[:180]
-                    case.updated_at = utc_now()
-            if ticket.status == "resolved":
-                resolution = ticket.closed_reason or ticket.resolution_type or ticket.human_reply
-                for case in linked_cases:
+                    case_changed = True
+                if "status" in changed_fields:
+                    if ticket.status == "resolved":
+                        resolution = (
+                            ticket.closed_reason or ticket.resolution_type or ticket.human_reply
+                        )
+                        case.status = "resolved"
+                        case.resolution = resolution or "工单已关闭"
+                    elif ticket.status == "pending":
+                        case.status = "waiting_customer"
+                        case.resolution = ""
+                    else:
+                        case.status = "handoff"
+                        case.resolution = ""
+                    case_changed = True
+                elif ticket.status == "resolved" and changed_fields.intersection(
+                    {"closed_reason", "resolution_type", "human_reply"}
+                ):
+                    resolution = (
+                        ticket.closed_reason or ticket.resolution_type or ticket.human_reply
+                    )
                     case.status = "resolved"
                     case.resolution = resolution or "工单已关闭"
+                    case_changed = True
+                if case_changed:
                     case.updated_at = utc_now()
             return asdict(ticket)
 

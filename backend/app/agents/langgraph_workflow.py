@@ -23,6 +23,7 @@ def build_langgraph_metadata() -> dict[str, Any]:
     nodes = [
         "router",
         "input_policy",
+        "action_planner",
         "case_binding",
         "retrieve_policy",
         "tool_policy",
@@ -34,7 +35,8 @@ def build_langgraph_metadata() -> dict[str, Any]:
     ]
     edges = [
         {"source": "router", "target": "input_policy", "condition": "always"},
-        {"source": "input_policy", "target": "case_binding", "condition": "always"},
+        {"source": "input_policy", "target": "action_planner", "condition": "always"},
+        {"source": "action_planner", "target": "case_binding", "condition": "always"},
         {"source": "case_binding", "target": "human_handoff", "condition": "input_blocked"},
         {"source": "case_binding", "target": "retrieve_policy", "condition": "input_allowed"},
         {"source": "retrieve_policy", "target": "tool_policy", "condition": "always"},

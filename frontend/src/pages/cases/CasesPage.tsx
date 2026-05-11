@@ -7,6 +7,7 @@ import { Card } from "../../components/Card";
 import { EmptyState } from "../../components/EmptyState";
 import type { CaseTask, SupportCase, ToolAudit } from "../../types/api";
 import type { CaseDetail } from "../../hooks/useCases";
+import { formatReadableDateTime } from "../../shared/format";
 
 export function CasesPage({
   cases,
@@ -54,7 +55,7 @@ export function CasesPage({
 
   return (
     <section className="case-ops-grid">
-      <aside className="queue-tabs case-filters" aria-label="Case filters">
+      <aside className="queue-tabs case-filters" aria-label="服务案件筛选">
         {[
           ["active", "处理中"],
           ["waiting_customer", "待客户确认"],
@@ -81,11 +82,11 @@ export function CasesPage({
               <ClipboardCheck />
             </span>
             <div>
-              <h2>Case Ledger</h2>
+              <h2>服务案件台账</h2>
               <p>{filtered.length} 个服务案件，按状态、风险、任务和审计证据处理。</p>
             </div>
           </div>
-          <button className="icon-button" type="button" aria-label="刷新 Case" onClick={onRefresh}>
+          <button className="icon-button" type="button" aria-label="刷新服务案件" onClick={onRefresh}>
             <RefreshCw className={busy ? "spin" : ""} size={18} />
           </button>
         </div>
@@ -93,7 +94,7 @@ export function CasesPage({
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索 Case、客户、订单、工单或摘要"
+            placeholder="搜索服务案件、客户、订单、工单或摘要"
           />
         </label>
         <div className="case-list">
@@ -115,7 +116,7 @@ export function CasesPage({
               <small className={`status ${supportCase.status}`}>{supportCase.status}</small>
             </button>
           ))}
-          {filtered.length === 0 && <EmptyState text="没有匹配的 Case" />}
+          {filtered.length === 0 && <EmptyState text="没有匹配的服务案件" />}
         </div>
       </Card>
 
@@ -124,7 +125,7 @@ export function CasesPage({
           <>
             <div className="detail-head case-detail-head">
               <div>
-                <span>当前处理主线</span>
+                <span>当前服务案件</span>
                 <h2>{selectedCase.id}</h2>
               </div>
               <Badge tone={selectedCase.risk_level === "high" ? "red" : "blue"}>
@@ -142,19 +143,19 @@ export function CasesPage({
             <section className="case-thread">
               <ThreadBlock
                 icon={<Workflow />}
-                title="Tasks"
+                title="处理任务"
                 emptyText="暂无任务"
                 rows={(detail?.tasks ?? []).map((task) => taskToRow(task))}
               />
               <ThreadBlock
                 icon={<ShieldCheck />}
-                title="Tool Audits"
+                title="工具审计"
                 emptyText="暂无工具审计"
                 rows={(detail?.audits ?? []).map((audit) => auditToRow(audit))}
               />
               <ThreadBlock
                 icon={<History />}
-                title="Resolution"
+                title="处理结果"
                 emptyText="尚未形成结案结果"
                 rows={
                   selectedCase.resolution
@@ -162,7 +163,7 @@ export function CasesPage({
                         {
                           key: "resolution",
                           title: selectedCase.resolution,
-                          meta: selectedCase.updated_at,
+                          meta: formatReadableDateTime(selectedCase.updated_at),
                           tone: "green"
                         }
                       ]
@@ -172,7 +173,7 @@ export function CasesPage({
             </section>
           </>
         ) : (
-          <EmptyState text="请选择一个 Case" />
+          <EmptyState text="请选择一个服务案件" />
         )}
       </Card>
     </section>

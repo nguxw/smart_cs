@@ -17,10 +17,17 @@ import { EvalPage } from "./pages/evals/EvalPage";
 import { KnowledgePage } from "./pages/knowledge/KnowledgePage";
 import { SystemPage } from "./pages/system/SystemPage";
 import { TicketsPage } from "./pages/tickets/TicketsPage";
-import type { TabKey } from "./types/api";
+import type { TabKey, Ticket } from "./types/api";
+
+const TAB_KEYS: TabKey[] = ["desk", "cases", "tickets", "kb", "evals", "system"];
+
+function readInitialTab(): TabKey {
+  const tab = new URLSearchParams(window.location.search).get("tab") as TabKey | null;
+  return tab && TAB_KEYS.includes(tab) ? tab : "desk";
+}
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<TabKey>("desk");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => readInitialTab());
   const [userId, setUserId] = useState("u_1001");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,10 +35,56 @@ export function App() {
   const system = useSystemHealth();
   const tickets = useTickets();
   const cases = useCases();
+  const ticketThreadConversation = tickets.thread?.conversation;
+  const refreshTicketThread = tickets.refreshThread;
   const refreshOperations = useCallback(async () => {
     await Promise.all([tickets.refresh(), cases.refresh()]);
   }, [cases.refresh, tickets.refresh]);
+  const navigateToTab = useCallback((nextTab: TabKey) => {
+    setActiveTab(nextTab);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", nextTab);
+    window.history.replaceState({}, "", url);
+  }, []);
+  const saveTicketAndRefreshCases = useCallback(
+    async (ticketId: string, payload: Partial<Ticket>) => {
+      const updated = await tickets.saveTicket(ticketId, payload);
+      await cases.refresh();
+      return updated;
+    },
+    [cases.refresh, tickets.saveTicket]
+  );
   const chat = useChatStream(userId, refreshOperations);
+  const openTicketConversation = useCallback(
+    async (conversationId: string, nextUserId: string) => {
+      setUserId(nextUserId);
+      await chat.loadConversation(conversationId);
+      navigateToTab("desk");
+    },
+    [chat.loadConversation, navigateToTab]
+  );
+  const handleNavigate = useCallback(
+    (nextTab: TabKey) => {
+      if (nextTab === "desk" && activeTab === "tickets") {
+        void (async () => {
+          try {
+            const ticketConversation =
+              ticketThreadConversation ?? (await refreshTicketThread())?.conversation;
+            if (ticketConversation) {
+              await openTicketConversation(ticketConversation.id, ticketConversation.user_id);
+              return;
+            }
+          } catch (cause) {
+            console.warn("Failed to open linked ticket conversation", cause);
+          }
+          navigateToTab(nextTab);
+        })();
+        return;
+      }
+      navigateToTab(nextTab);
+    },
+    [activeTab, navigateToTab, openTicketConversation, refreshTicketThread, ticketThreadConversation]
+  );
   const knowledge = useKnowledgeSearch();
   const evals = useEvalRun();
 
@@ -73,7 +126,7 @@ export function App() {
       },
       {
         icon: <Inbox />,
-        label: "Case 主线",
+        label: "服务案件",
         value: `${caseStats.active} 活跃`,
         tone: caseStats.high > 0 ? "red" : caseStats.waiting > 0 ? "amber" : "green",
         detail: `${caseStats.waiting} 待客户确认 / ${caseStats.handoff} 人工接管`
@@ -129,7 +182,7 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar activeTab={activeTab} onNavigate={setActiveTab} health={system.health} />
+      <Sidebar activeTab={activeTab} onNavigate={handleNavigate} health={system.health} />
       <PageShell>
         <Topbar
           userId={userId}
@@ -183,9 +236,15 @@ export function App() {
           <TicketsPage
             tickets={tickets.tickets}
             selectedTicket={tickets.selectedTicket}
+            thread={tickets.thread}
+            threadBusy={tickets.threadBusy}
             onSelectTicket={tickets.setSelectedTicketId}
-            onSaveTicket={tickets.saveTicket}
-            onRefresh={() => void tickets.refresh()}
+            onSaveTicket={saveTicketAndRefreshCases}
+            onRefreshThread={() => void tickets.refreshThread()}
+            onOpenConversation={(conversationId, conversationUserId) =>
+              void openTicketConversation(conversationId, conversationUserId)
+            }
+            onRefresh={() => void refreshOperations()}
             busy={tickets.busy}
           />
         )}

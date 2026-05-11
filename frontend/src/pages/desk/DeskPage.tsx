@@ -3,6 +3,7 @@ import { SplitPane } from "../../components/SplitPane";
 import { ChatPanel } from "./ChatPanel";
 import { CustomerProfile } from "./CustomerProfile";
 import { ActionPanel } from "./ActionPanel";
+import { ActionPlanPanel } from "./ActionPlanPanel";
 import { AgentTimeline } from "./AgentTimeline";
 import { ToolTracePanel } from "./ToolTracePanel";
 import { CitationPanel } from "./CitationPanel";
@@ -37,6 +38,7 @@ export function DeskPage({
       }
       right={
         <div className="inspector-stack">
+          <ActionPlanPanel plan={chat.actionPlan} />
           <ActionPanel
             toolCalls={chat.toolCalls}
             task={chat.currentTask}

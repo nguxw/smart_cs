@@ -2,14 +2,31 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from app.auth.context import AuthContext
 from app.models.schemas import ToolCallRecord
 from app.tools.business_tools import BusinessToolRegistry
 
-SIDE_EFFECT_TOOLS = {"create_refund", "create_ticket", "handoff_to_human"}
-CONFIRMATION_TOOLS = {"create_refund"}
+
+class ToolRiskLevel(str, Enum):
+    READ_ONLY = "read_only"
+    SIDE_EFFECT = "side_effect"
+    HIGH_RISK = "high_risk"
+
+
+TOOL_RISK_LEVELS = {
+    "query_order": ToolRiskLevel.READ_ONLY,
+    "query_invoice": ToolRiskLevel.READ_ONLY,
+    "check_refund_eligibility": ToolRiskLevel.READ_ONLY,
+    "create_refund": ToolRiskLevel.SIDE_EFFECT,
+    "create_ticket": ToolRiskLevel.SIDE_EFFECT,
+    "handoff_to_human": ToolRiskLevel.SIDE_EFFECT,
+}
+SIDE_EFFECT_TOOLS = {
+    name for name, risk_level in TOOL_RISK_LEVELS.items() if risk_level != ToolRiskLevel.READ_ONLY
+}
 TOOL_PERMISSIONS = {
     "query_order": "order:read:self",
     "check_refund_eligibility": "refund:create:self",
@@ -26,6 +43,7 @@ class ToolPolicyDecision:
     status: str
     reason: str = ""
     requires_confirmation: bool = False
+    risk_level: ToolRiskLevel = ToolRiskLevel.READ_ONLY
 
 
 class ToolPolicy:
@@ -62,18 +80,21 @@ class ToolPolicy:
                 False,
                 "permission_denied",
                 f"Missing permission: {permission}",
+                risk_level=TOOL_RISK_LEVELS.get(tool_name, ToolRiskLevel.READ_ONLY),
             )
 
-        if tool_name in CONFIRMATION_TOOLS and not confirmed:
+        risk_level = TOOL_RISK_LEVELS.get(tool_name, ToolRiskLevel.READ_ONLY)
+        if risk_level != ToolRiskLevel.READ_ONLY and not confirmed:
             return ToolPolicyDecision(
                 True,
                 "needs_confirmation",
-                "Side-effect tool requires explicit customer confirmation.",
+                "Side-effect tool requires explicit confirmation before execution.",
                 requires_confirmation=True,
+                risk_level=risk_level,
             )
 
-        status = "side_effect_approved" if tool_name in SIDE_EFFECT_TOOLS else "approved"
-        return ToolPolicyDecision(True, status)
+        status = "side_effect_approved" if risk_level != ToolRiskLevel.READ_ONLY else "approved"
+        return ToolPolicyDecision(True, status, risk_level=risk_level)
 
 
 class ToolRuntime:
@@ -124,6 +145,7 @@ class ToolRuntime:
                 "allowed": decision.allowed,
                 "reason": decision.reason,
                 "requires_confirmation": decision.requires_confirmation,
+                "risk_level": decision.risk_level.value,
             }
             audit = self.repository.append_tool_audit(
                 conversation_id=conversation_id,

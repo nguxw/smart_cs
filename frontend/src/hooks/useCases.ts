@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CaseTask, SupportCase, ToolAudit } from "../types/api";
 import { fetchCaseDetail, fetchCases } from "../services/casesApi";
@@ -12,6 +12,7 @@ export type CaseDetail = {
 export function useCases() {
   const [cases, setCases] = useState<SupportCase[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const selectedCaseIdRef = useRef<string | null>(null);
   const [detail, setDetail] = useState<CaseDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,16 +33,15 @@ export function useCases() {
     try {
       const rows = await fetchCases();
       setCases(rows);
-      let nextSelectedId: string | null = null;
-      setSelectedCaseId((current) => {
-        const currentStillExists = rows.some((row) => row.id === current);
-        nextSelectedId = currentStillExists ? current : rows[0]?.id ?? null;
-        return nextSelectedId;
-      });
+      const current = selectedCaseIdRef.current;
+      const currentStillExists = rows.some((row) => row.id === current);
+      const nextSelectedId = currentStillExists ? current : rows[0]?.id ?? null;
+      selectedCaseIdRef.current = nextSelectedId;
+      setSelectedCaseId(nextSelectedId);
       await loadDetail(nextSelectedId);
       return rows;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Case refresh failed");
+      setError(cause instanceof Error ? cause.message : "服务案件刷新失败");
       throw cause;
     } finally {
       setBusy(false);
@@ -54,13 +54,14 @@ export function useCases() {
 
   const selectCase = useCallback(
     async (caseId: string) => {
+      selectedCaseIdRef.current = caseId;
       setSelectedCaseId(caseId);
       setBusy(true);
       setError(null);
       try {
         await loadDetail(caseId);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Case detail failed");
+        setError(cause instanceof Error ? cause.message : "服务案件详情加载失败");
       } finally {
         setBusy(false);
       }
