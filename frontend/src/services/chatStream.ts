@@ -53,17 +53,45 @@ export async function streamChat(
 
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    for (const frame of frames) handleFrame(frame, handlers);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        const tail = buffer.trim();
+        if (tail) {
+          const frameResult = handleFrame(tail, handlers);
+          if (frameResult.event === "error") {
+            throw new Error(frameResult.errorMessage ?? "Agent stream error");
+          }
+        }
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const normalized = buffer.replace(/\r\n/g, "\n");
+      const frames = normalized.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const frameResult = handleFrame(frame, handlers);
+        if (frameResult.event === "final") {
+          await reader.cancel();
+          return;
+        }
+        if (frameResult.event === "error") {
+          await reader.cancel();
+          throw new Error(frameResult.errorMessage ?? "Agent stream error");
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
-function handleFrame(frame: string, handlers: ChatStreamHandlers) {
+function handleFrame(
+  frame: string,
+  handlers: ChatStreamHandlers
+): { event: string | null; errorMessage?: string } {
   const event = frame
     .split("\n")
     .find((line) => line.startsWith("event:"))
@@ -74,7 +102,7 @@ function handleFrame(frame: string, handlers: ChatStreamHandlers) {
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.replace("data:", "").trimStart())
     .join("\n");
-  if (!event || !dataText) return;
+  if (!event || !dataText) return { event: null };
   const data = JSON.parse(dataText);
   if (event === "agent_step" && data.status !== "started") handlers.onAgentStep(data);
   if (event === "action_plan") handlers.onActionPlan(data);
@@ -86,4 +114,5 @@ function handleFrame(frame: string, handlers: ChatStreamHandlers) {
   if (event === "token") handlers.onToken(data.content ?? "");
   if (event === "final") handlers.onFinal(data);
   if (event === "error") handlers.onError(data.message ?? "Agent stream error");
+  return { event, errorMessage: data.message };
 }

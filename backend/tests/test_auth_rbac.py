@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.auth.context import AuthContext
-from app.auth.dependencies import require_auth, require_case_access, require_permission
+from app.auth.dependencies import (
+    require_auth,
+    require_case_access,
+    require_permission,
+    require_ticket_access,
+)
 from app.auth.tokens import create_access_token
+from app.core.config import Settings
 from app.data.repository import DemoRepository
 
 AUTH = Depends(require_auth)
@@ -97,3 +104,45 @@ def test_customer_case_access_is_owner_scoped() -> None:
         raise AssertionError("customer should not access another user's case")
 
     require_case_access(other, agent)
+
+
+def test_ticket_access_is_tenant_scoped() -> None:
+    repo = DemoRepository()
+    ticket = repo.create_ticket(
+        user_id="u_1001",
+        title="tenant scoped",
+        description="same tenant only",
+        tenant_id="tenant-a",
+    )
+    same_tenant_agent = AuthContext(
+        user_id="agent-a",
+        tenant_id="tenant-a",
+        roles=("agent",),
+        permissions=("ticket:read:tenant", "ticket:write:tenant"),
+    )
+    other_tenant_agent = AuthContext(
+        user_id="agent-b",
+        tenant_id="tenant-b",
+        roles=("agent",),
+        permissions=("ticket:read:tenant", "ticket:write:tenant"),
+    )
+
+    require_ticket_access(ticket, same_tenant_agent)
+    with pytest.raises(Exception) as exc_info:
+        require_ticket_access(ticket, other_tenant_agent)
+    assert getattr(exc_info.value, "status_code", None) == 403
+
+
+def test_production_runtime_boundaries_reject_demo_auth_settings() -> None:
+    with pytest.raises(RuntimeError):
+        Settings(
+            app_env="production",
+            demo_header_auth_enabled=True,
+            auth_token_secret="not-demo",
+        ).validate_runtime_boundaries()
+    with pytest.raises(RuntimeError):
+        Settings(
+            app_env="production",
+            demo_header_auth_enabled=False,
+            auth_token_secret="local-demo-secret-change-me",
+        ).validate_runtime_boundaries()

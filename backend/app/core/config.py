@@ -38,7 +38,7 @@ class Settings:
         default=_local_env in {"local", "dev", "development", "test"},
     )
     auth_token_secret: str = os.getenv("AUTH_TOKEN_SECRET", "local-demo-secret-change-me")
-    agent_runtime: str = os.getenv("AGENT_RUNTIME", "orchestrator")
+    agent_runtime: str = os.getenv("AGENT_RUNTIME", "langgraph")
 
     llm_provider: str = os.getenv("LLM_PROVIDER", "mock")
     llm_model: str = os.getenv("LLM_MODEL") or os.getenv("MODEL_NAME") or "gpt-4o-mini"
@@ -49,6 +49,7 @@ class Settings:
         or "https://api.openai.com/v1"
     )
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    llm_timeout_s: float = float(os.getenv("LLM_TIMEOUT_S", "8"))
 
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "local")
     embedding_model: str = os.getenv(
@@ -72,5 +73,15 @@ class Settings:
 
     mock_mode: bool = _truthy(os.getenv("MOCK_MODE"), default=True)
 
+    def validate_runtime_boundaries(self) -> None:
+        env = self.app_env.strip().lower()
+        if env in {"local", "dev", "development", "test"}:
+            return
+        if self.demo_header_auth_enabled:
+            raise RuntimeError("DEMO_HEADER_AUTH_ENABLED must be false outside local/dev/test")
+        if self.auth_token_secret == "local-demo-secret-change-me":
+            raise RuntimeError("AUTH_TOKEN_SECRET must be changed outside local/dev/test")
+
 
 settings = Settings()
+settings.validate_runtime_boundaries()

@@ -20,7 +20,7 @@ from app.models.schemas import (
     StreamEvent,
     ToolCallRecord,
 )
-from app.state_machines import CaseStatus, CaseWorkflow, TaskStatus, TaskWorkflow
+from app.state_machines import CaseStatus, CaseWorkflow, TaskStatus, TaskWorkflow, TicketWorkflow
 from app.tools.business_tools import BusinessToolRegistry
 from app.tools.runtime import ToolRuntime
 
@@ -49,6 +49,7 @@ class AgentOrchestrator:
         self.llm = llm
         self.case_workflow = CaseWorkflow(repository)
         self.task_workflow = TaskWorkflow(repository)
+        self.ticket_workflow = TicketWorkflow(repository)
 
     async def run_stream(
         self,
@@ -58,7 +59,7 @@ class AgentOrchestrator:
         auth_context: AuthContext | None = None,
     ) -> AsyncIterator[StreamEvent]:
         auth = auth_context or build_dev_auth_context(None, user_id)
-        conversation = self.repository.get_or_create_conversation(conversation_id, auth.user_id)
+        conversation = self._get_or_create_conversation(conversation_id, auth)
         prior_messages = list(conversation.messages)
         user_message = ChatMessage(role="user", content=message)
         self.repository.append_message(conversation.id, user_message)
@@ -135,6 +136,20 @@ class AgentOrchestrator:
         if final is None:  # pragma: no cover - defensive
             raise RuntimeError("Agent run did not finalize")
         return final
+
+    def _get_or_create_conversation(
+        self,
+        conversation_id: str | None,
+        auth: AuthContext,
+    ) -> Any:
+        try:
+            return self.repository.get_or_create_conversation(
+                conversation_id,
+                auth.user_id,
+                tenant_id=auth.tenant_id,
+            )
+        except TypeError:
+            return self.repository.get_or_create_conversation(conversation_id, auth.user_id)
 
     async def confirm_task(
         self,
@@ -227,6 +242,7 @@ class AgentOrchestrator:
             {
                 "reason": reason,
                 "conversation_id": case["conversation_id"],
+                "case_id": case_id,
             },
             auth_context,
             conversation_id=case["conversation_id"],
@@ -480,11 +496,11 @@ class AgentOrchestrator:
                     "estimated_effect": "将创建退款申请，不会立即退回资金。",
                     "requires_confirmation": True,
                 }
-                task = self.repository.create_task(
+                task = self.task_workflow.create_confirmation(
                     case_id=state.case_id or "",
-                    task_type="customer_confirmation",
                     required_action="confirm_refund",
                     pending_confirmation=pending,
+                    actor=auth,
                 )
                 state.task_id = task["id"]
                 state.resume_token = task["resume_token"]
@@ -537,13 +553,14 @@ class AgentOrchestrator:
         existing_case = self.repository.get_case(state.case_id)
         ticket_id = (existing_case or {}).get("related_ticket_id")
         if ticket_id:
-            self.repository.update_ticket(
-                ticket_id,
-                {
+            self.ticket_workflow.update(
+                ticket_id=ticket_id,
+                payload={
                     "status": "resolved",
                     "resolution_type": "customer_closed_conversation",
                     "closed_reason": resolution,
                 },
+                actor=_auth_from_state(state),
             )
         case = self.case_workflow.transition(
             case_id=state.case_id,
@@ -570,11 +587,13 @@ class AgentOrchestrator:
             else "create_ticket"
         )
         arguments = (
-            {"reason": reason, "conversation_id": state.conversation_id}
+            {"reason": reason, "conversation_id": state.conversation_id, "case_id": state.case_id}
             if tool_name == "handoff_to_human"
             else {
                 "title": "售后问题人工跟进",
                 "description": description,
+                "conversation_id": state.conversation_id,
+                "case_id": state.case_id,
                 "priority": "high" if state.metadata.get("risk_level") == "high" else "medium",
                 "category": state.intent,
                 "handoff_reason": reason,

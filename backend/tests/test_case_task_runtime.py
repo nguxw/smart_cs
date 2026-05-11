@@ -5,6 +5,8 @@ from app.auth.context import AuthContext
 from app.data.repository import DemoRepository
 from app.llm.provider import MockLLMProvider
 from app.rag.knowledge_store import create_seeded_knowledge_store
+from app.state_machines import TicketWorkflow
+from app.state_machines.errors import StateTransitionError
 from app.tools.business_tools import BusinessToolRegistry
 from app.tools.runtime import ToolRuntime
 
@@ -153,8 +155,12 @@ async def test_tool_runtime_rebinds_user_id_from_auth_context() -> None:
     )
 
     assert call.arguments["user_id"] == "u_1001"
-    assert call.result["authorized"] is False
-    assert repo.list_tool_audits(conversation_id="cv-auth-test")[0]["policy_status"] == "approved"
+    assert call.success is False
+    assert call.policy_status == "permission_denied"
+    assert call.result["allowed"] is False
+    assert repo.list_tool_audits(conversation_id="cv-auth-test")[0]["policy_status"] == (
+        "permission_denied"
+    )
 
 
 @pytest.mark.asyncio
@@ -225,13 +231,14 @@ def test_ticket_human_reply_writes_back_to_conversation_and_closes_case() -> Non
     )
     repo.update_case(case["id"], {"related_ticket_id": ticket["id"]})
 
-    updated = repo.update_ticket(
-        ticket["id"],
-        {
+    updated = TicketWorkflow(repo).update(
+        ticket_id=ticket["id"],
+        payload={
             "human_reply": "已为你提交二线复核，预计今天内回复。",
             "status": "resolved",
             "closed_reason": "人工已回复客户",
         },
+        actor=AuthContext(user_id="agent-demo", roles=("agent",)),
     )
     snapshot = repo.conversation_snapshot(conversation.id)
     closed_case = repo.get_case(case["id"])
@@ -262,14 +269,16 @@ def test_ticket_queue_metadata_and_reopen_state_sync_to_case() -> None:
     )
     repo.update_case(case["id"], {"related_ticket_id": ticket["id"]})
 
-    repo.update_ticket(
-        ticket["id"],
-        {
+    workflow = TicketWorkflow(repo)
+    workflow.update(
+        ticket_id=ticket["id"],
+        payload={
             "status": "pending",
             "priority": "high",
             "category": "handoff",
             "agent_summary": "物流停滞，已升级二线跟进。",
         },
+        actor=AuthContext(user_id="agent-demo", roles=("agent",)),
     )
     escalated_case = repo.get_case(case["id"])
 
@@ -279,19 +288,23 @@ def test_ticket_queue_metadata_and_reopen_state_sync_to_case() -> None:
     assert escalated_case["category"] == "handoff"
     assert escalated_case["summary"] == "物流停滞，已升级二线跟进。"
 
-    repo.update_ticket(ticket["id"], {"status": "resolved", "closed_reason": "已补发"})
+    workflow.update(
+        ticket_id=ticket["id"],
+        payload={"status": "resolved", "closed_reason": "已补发"},
+        actor=AuthContext(user_id="agent-demo", roles=("agent",)),
+    )
     closed_case = repo.get_case(case["id"])
 
     assert closed_case is not None
     assert closed_case["status"] == "resolved"
     assert closed_case["resolution"] == "已补发"
 
-    repo.update_ticket(ticket["id"], {"status": "open"})
-    reopened_case = repo.get_case(case["id"])
-
-    assert reopened_case is not None
-    assert reopened_case["status"] == "handoff"
-    assert reopened_case["resolution"] == ""
+    with pytest.raises(StateTransitionError):
+        workflow.update(
+            ticket_id=ticket["id"],
+            payload={"status": "open"},
+            actor=AuthContext(user_id="agent-demo", roles=("agent",)),
+        )
 
 
 @pytest.mark.asyncio
@@ -340,3 +353,25 @@ async def test_customer_closing_conversation_resolves_case_without_handoff() -> 
     assert closed_task["status"] == "cancelled"
     assert closed_ticket.status == "resolved"
     assert len(repo.tickets) == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_handoff_in_same_conversation_reuses_open_ticket() -> None:
+    repo = DemoRepository()
+    orchestrator = AgentOrchestrator(
+        repository=repo,
+        knowledge_store=create_seeded_knowledge_store(),
+        tools=BusinessToolRegistry(repo),
+        llm=MockLLMProvider(),
+    )
+    conversation_id = "cv-repeat-handoff"
+
+    first = await orchestrator.run_once("请转人工处理这个售后问题", "u_1001", conversation_id)
+    second = await orchestrator.run_once("还是需要人工客服继续处理", "u_1001", conversation_id)
+
+    tickets = repo.list_tickets()
+    assert len(tickets) == 1
+    assert first.metadata["ticket"]["id"] == second.metadata["ticket"]["id"]
+    assert first.metadata["ticket"]["reused"] is False
+    assert second.metadata["ticket"]["reused"] is True
+    assert repo.get_case(second.case_id or "")["related_ticket_id"] == tickets[0]["id"]

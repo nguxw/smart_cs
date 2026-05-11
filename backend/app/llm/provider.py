@@ -98,8 +98,12 @@ def create_llm_provider(settings: Settings) -> LLMProvider:
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
             model=settings.llm_model,
+            timeout_s=settings.llm_timeout_s,
         )
     if provider == "ollama":
-        return OllamaProvider(base_url=settings.ollama_base_url, model=settings.llm_model)
+        return OllamaProvider(
+            base_url=settings.ollama_base_url,
+            model=settings.llm_model,
+            timeout_s=settings.llm_timeout_s,
+        )
     return MockLLMProvider(model=settings.llm_model)
-

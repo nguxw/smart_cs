@@ -108,9 +108,10 @@ def require_ticket_access(
     if auth.has_permission("*"):
         return
     owner_ok = ticket.get("user_id") == auth.user_id
+    tenant_ok = ticket.get("tenant_id") == auth.tenant_id
     if owner_ok and not write and auth.has_permission("ticket:create:self"):
         return
-    if auth.has_permission("ticket:write:tenant" if write else "ticket:read:tenant"):
+    if tenant_ok and auth.has_permission("ticket:write:tenant" if write else "ticket:read:tenant"):
         return
     raise HTTPException(status_code=403, detail="Ticket access denied")
 

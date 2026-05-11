@@ -50,13 +50,26 @@ def create_fastmcp_server(registry: BusinessToolRegistry) -> Any:
         description: str,
         priority: str = "medium",
         category: str = "general",
+        tenant_id: str = "demo-tenant",
     ) -> dict[str, Any]:
         """创建人工客服工单。"""
 
-        return registry.repository.create_ticket(user_id, title, description, priority, category)
+        return registry.repository.create_ticket(
+            user_id=user_id,
+            title=title,
+            description=description,
+            priority=priority,
+            category=category,
+            tenant_id=tenant_id,
+        )
 
     @server.tool()
-    async def handoff_to_human(user_id: str, reason: str, conversation_id: str) -> dict[str, Any]:
+    async def handoff_to_human(
+        user_id: str,
+        reason: str,
+        conversation_id: str,
+        tenant_id: str = "demo-tenant",
+    ) -> dict[str, Any]:
         """将敏感或复杂问题移交人工客服。"""
 
         return registry.repository.create_ticket(
@@ -65,7 +78,7 @@ def create_fastmcp_server(registry: BusinessToolRegistry) -> Any:
             description=f"会话 {conversation_id} 需要人工处理：{reason}",
             priority="high",
             category="handoff",
+            tenant_id=tenant_id,
         )
 
     return server
-

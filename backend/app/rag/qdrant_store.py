@@ -6,13 +6,23 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
-from qdrant_client import QdrantClient, models
-
 from app.models.schemas import KnowledgeDoc
 from app.rag.embeddings import DeterministicEmbeddingProvider, EmbeddingProvider
 from app.rag.grounding import annotate_grounding
 from app.rag.knowledge_store import HybridKnowledgeStore, chunk_text
 from app.rag.reranker import rerank_documents
+
+QdrantClientType: Any
+qdrant_models: Any
+try:
+    from qdrant_client import QdrantClient as _QdrantClientType
+    from qdrant_client import models as _qdrant_models
+except ModuleNotFoundError:  # pragma: no cover - optional adapter dependency
+    QdrantClientType = None
+    qdrant_models = None
+else:
+    QdrantClientType = _QdrantClientType
+    qdrant_models = _qdrant_models
 
 
 def stable_embedding(text: str, vector_size: int = 384) -> list[float]:
@@ -39,7 +49,9 @@ class QdrantKnowledgeStore:
             vector_size=vector_size
         )
         self.vector_size = self.embedding_provider.vector_size
-        self.client = QdrantClient(url=url, timeout=2, check_compatibility=False)
+        if QdrantClientType is None or qdrant_models is None:
+            raise RuntimeError("Install qdrant-client to use the Qdrant knowledge store")
+        self.client = QdrantClientType(url=url, timeout=2, check_compatibility=False)
         self._ensure_collection()
 
     def ping(self) -> bool:
@@ -59,9 +71,9 @@ class QdrantKnowledgeStore:
         if not exists:
             self.client.create_collection(
                 collection_name=self.collection_name,
-                vectors_config=models.VectorParams(
+                vectors_config=qdrant_models.VectorParams(
                     size=self.vector_size,
-                    distance=models.Distance.COSINE,
+                    distance=qdrant_models.Distance.COSINE,
                 ),
             )
 
@@ -78,7 +90,7 @@ class QdrantKnowledgeStore:
         tags: Iterable[str] | None = None,
     ) -> list[KnowledgeDoc]:
         created: list[KnowledgeDoc] = []
-        points: list[models.PointStruct] = []
+        points: list[Any] = []
         for index, chunk in enumerate(chunk_text(content)):
             doc_id = f"{source}:{index}"
             doc = KnowledgeDoc(
@@ -91,7 +103,7 @@ class QdrantKnowledgeStore:
             )
             created.append(doc)
             points.append(
-                models.PointStruct(
+                qdrant_models.PointStruct(
                     id=str(uuid5(NAMESPACE_URL, doc_id)),
                     vector=self.embedding_provider.embed(f"{title}\n{chunk}"),
                     payload=asdict(doc),
@@ -199,20 +211,22 @@ def create_qdrant_or_local_store(
         return store
 
 
-def _build_filter(category: str | None, tags: list[str] | None) -> models.Filter | None:
+def _build_filter(category: str | None, tags: list[str] | None) -> Any | None:
+    if qdrant_models is None:
+        return None
     conditions: list[Any] = []
     if category:
         conditions.append(
-            models.FieldCondition(
+            qdrant_models.FieldCondition(
                 key="category",
-                match=models.MatchValue(value=category),
+                match=qdrant_models.MatchValue(value=category),
             )
         )
     for tag in tags or []:
         conditions.append(
-            models.FieldCondition(
+            qdrant_models.FieldCondition(
                 key="tags",
-                match=models.MatchAny(any=[tag]),
+                match=qdrant_models.MatchAny(any=[tag]),
             )
         )
-    return models.Filter(must=cast(Any, conditions)) if conditions else None
+    return qdrant_models.Filter(must=cast(Any, conditions)) if conditions else None

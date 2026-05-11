@@ -6,7 +6,8 @@
 flowchart LR
   U["User"] --> FE["React Agent Desk"]
   FE --> API["FastAPI SSE API"]
-  API --> R["router"]
+  API --> LG["Live LangGraph StateGraph"]
+  LG --> R["router"]
   R --> P["input_policy"]
   P --> AP["action_planner"]
   AP --> C["case_binding"]
@@ -27,7 +28,7 @@ flowchart LR
 
 ## Agent Harness
 
-The eval harness replays categorized e-commerce cases through the same orchestrator used by the API. It records intent accuracy, tool selection, tool argument correctness, citation hit rate, groundedness, handoff precision, task success, PII leakage, unsafe-request blocking, and latency. The default run uses `MockLLMProvider` to keep CI deterministic and free.
+The eval harness replays categorized e-commerce cases through the default live LangGraph runtime. It records intent accuracy, tool selection, tool argument correctness, citation hit rate, groundedness, handoff precision, task success, PII leakage, unsafe-request blocking, and latency. The default run uses `MockLLMProvider` to keep CI deterministic and free.
 
 ## Production Swap Points
 
@@ -39,9 +40,9 @@ The eval harness replays categorized e-commerce cases through the same orchestra
 
 ## Design Decisions
 
-### ADR-001: Explicit Orchestrator Before Free-Form ReAct
+### ADR-001: Live LangGraph With Rule-First Governance
 
-SmartCS keeps the live customer-service flow in a bounded orchestrator sequence so every node emits traceable SSE events and can be regression-tested. A LangGraph parity adapter now exposes a compiled graph contract, but the default executor remains the explicit orchestrator until parity gates are broadened.
+SmartCS now executes the customer-service flow through a live LangGraph `StateGraph`, while preserving bounded node handlers and the existing SSE event contract. Routing, tool selection, risk boundaries, and side effects remain deterministic so the runtime is auditable and regression-tested. The explicit orchestrator remains as a compatibility executor and parity baseline.
 
 ### ADR-002: Side Effects Require Confirmation And Idempotency
 
@@ -49,7 +50,7 @@ Read tools can execute directly, while side-effect tools such as refund creation
 
 ### ADR-003: Deterministic Mock Mode Is A Release Gate
 
-CI uses the mock provider and fixed JSONL fixtures so prompt, tool, and KB regressions are reproducible without model keys. Live-model evaluation is a later comparison layer, not the baseline gate.
+CI uses the mock provider and 51 fixed JSONL fixtures so prompt, tool, and KB regressions are reproducible without model keys. Live-model evaluation is a later comparison layer, not the baseline gate.
 
 ### ADR-004: Infrastructure Adapters Are Optional
 

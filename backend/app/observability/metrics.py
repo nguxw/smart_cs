@@ -31,6 +31,10 @@ class MetricsRegistry:
             "# TYPE smartcs_tool_call_total counter",
             "# HELP smartcs_eval_run_total Eval runs executed by the API or CI.",
             "# TYPE smartcs_eval_run_total counter",
+            "# HELP smartcs_first_token_latency_ms Time from chat request to first token.",
+            "# TYPE smartcs_first_token_latency_ms summary",
+            "# HELP smartcs_stream_e2e_latency_ms Time from chat request to final event.",
+            "# TYPE smartcs_stream_e2e_latency_ms summary",
         ]
         with self._lock:
             counters = dict(self._counters)

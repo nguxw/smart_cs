@@ -176,7 +176,7 @@ def _ticket_visible(ticket: dict[str, Any], auth: AuthContext) -> bool:
         return True
     if ticket.get("user_id") == auth.user_id and auth.has_permission("ticket:create:self"):
         return True
-    return auth.has_permission("ticket:read:tenant")
+    return ticket.get("tenant_id") == auth.tenant_id and auth.has_permission("ticket:read:tenant")
 
 
 def _case_for_task(task_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -356,22 +356,45 @@ async def chat_stream(
     async def generator():
         assistant_answer = ""
         stream_key = request.conversation_id or f"pending:{auth_context.user_id}"
-        async for event in orchestrator.run_stream(
-            message=request.message,
-            user_id=auth_context.user_id,
-            conversation_id=request.conversation_id,
-            auth_context=auth_context,
-        ):
-            payload = to_jsonable(event.data)
-            conversation_key = payload.get("conversation_id") or stream_key
-            if event.event == "token":
-                assistant_answer += str(payload.get("content", ""))
-            runtime_service.append_stream_event(conversation_key, event.event, payload)
-            if event.event == "final":
-                final_conversation_id = str(payload["conversation_id"])
-                runtime_service.cache_message(final_conversation_id, "user", request.message)
-                runtime_service.cache_message(final_conversation_id, "assistant", assistant_answer)
-            yield sse(event.event, event.data)
+        stream_start = time.perf_counter()
+        first_token_observed = False
+        try:
+            async for event in orchestrator.run_stream(
+                message=request.message,
+                user_id=auth_context.user_id,
+                conversation_id=request.conversation_id,
+                auth_context=auth_context,
+            ):
+                payload = to_jsonable(event.data)
+                conversation_key = payload.get("conversation_id") or stream_key
+                if event.event == "token":
+                    if not first_token_observed:
+                        metrics_registry.observe(
+                            "smartcs_first_token_latency_ms",
+                            (time.perf_counter() - stream_start) * 1000,
+                            runtime=settings.agent_runtime,
+                        )
+                        first_token_observed = True
+                    assistant_answer += str(payload.get("content", ""))
+                runtime_service.append_stream_event(conversation_key, event.event, payload)
+                if event.event == "final":
+                    final_conversation_id = str(payload["conversation_id"])
+                    runtime_service.cache_message(final_conversation_id, "user", request.message)
+                    runtime_service.cache_message(
+                        final_conversation_id,
+                        "assistant",
+                        assistant_answer,
+                    )
+                    metrics_registry.observe(
+                        "smartcs_stream_e2e_latency_ms",
+                        (time.perf_counter() - stream_start) * 1000,
+                        runtime=settings.agent_runtime,
+                    )
+                yield sse(event.event, event.data)
+        except Exception as exc:
+            payload = {"message": str(exc), "conversation_id": stream_key}
+            runtime_service.append_stream_event(stream_key, "error", payload)
+            yield sse("error", payload)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -526,9 +549,11 @@ async def get_conversation(
     snapshot = repository.conversation_snapshot(conversation_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if snapshot.get("user_id") != auth_context.user_id and not auth_context.has_permission(
-        "conversation:read:tenant"
-    ):
+    tenant_allowed = (
+        snapshot.get("tenant_id") == auth_context.tenant_id
+        and auth_context.has_permission("conversation:read:tenant")
+    )
+    if snapshot.get("user_id") != auth_context.user_id and not tenant_allowed:
         raise HTTPException(status_code=403, detail="Conversation access denied")
     return snapshot
 
@@ -541,9 +566,11 @@ async def get_stream_state(
     snapshot = repository.conversation_snapshot(conversation_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if snapshot.get("user_id") != auth_context.user_id and not auth_context.has_permission(
-        "conversation:read:tenant"
-    ):
+    tenant_allowed = (
+        snapshot.get("tenant_id") == auth_context.tenant_id
+        and auth_context.has_permission("conversation:read:tenant")
+    )
+    if snapshot.get("user_id") != auth_context.user_id and not tenant_allowed:
         raise HTTPException(status_code=403, detail="Conversation access denied")
     return {
         "conversation_id": conversation_id,

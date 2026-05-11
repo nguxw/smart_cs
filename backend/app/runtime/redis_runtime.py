@@ -5,7 +5,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from redis import Redis
+RedisClient: Any
+try:
+    from redis import Redis as _RedisClient
+except ModuleNotFoundError:  # pragma: no cover - optional adapter dependency
+    RedisClient = None
+else:
+    RedisClient = _RedisClient
 
 
 @dataclass
@@ -21,9 +27,11 @@ class RedisRuntimeService:
     backend_name = "redis"
 
     def __init__(self, redis_url: str, rate_limit_per_minute: int = 30) -> None:
+        if RedisClient is None:
+            raise RuntimeError("Install redis to use the Redis runtime service")
         self.redis_url = redis_url
         self.rate_limit_per_minute = rate_limit_per_minute
-        self.client: Any = Redis.from_url(
+        self.client: Any = RedisClient.from_url(
             redis_url,
             decode_responses=True,
             socket_connect_timeout=2,

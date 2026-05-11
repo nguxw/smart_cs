@@ -28,6 +28,30 @@ class TaskWorkflow:
         self.repository = repository
         self.case_workflow = CaseWorkflow(repository)
 
+    def create_confirmation(
+        self,
+        *,
+        case_id: str,
+        required_action: str,
+        pending_confirmation: dict[str, Any],
+        actor: AuthContext,
+    ) -> dict[str, Any]:
+        task = self.repository.create_task(
+            case_id=case_id,
+            task_type="customer_confirmation",
+            required_action=required_action,
+            pending_confirmation=pending_confirmation,
+        )
+        self.case_workflow.transition(
+            case_id=case_id,
+            target=CaseStatus.WAITING_CUSTOMER,
+            reason="waiting_for_customer_confirmation",
+            actor=actor,
+            updates={"current_task_id": task["id"]},
+            allow_pending_tasks=True,
+        )
+        return task
+
     def transition(
         self,
         *,
@@ -58,6 +82,9 @@ class TaskWorkflow:
             },
         )
         case = self.repository.get_case(task["case_id"])
+        terminal_statuses = {TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.FAILED}
+        if case and target_status in terminal_statuses:
+            self.repository.update_case(case["id"], {"current_task_id": None})
         if case and target_status in {TaskStatus.CANCELLED, TaskStatus.FAILED}:
             self.case_workflow.transition(
                 case_id=case["id"],

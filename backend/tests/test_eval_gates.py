@@ -10,7 +10,7 @@ from app.evals.harness import EvalHarness, load_eval_cases
 @pytest.mark.asyncio
 async def test_agent_eval_release_gates() -> None:
     cases = load_eval_cases()
-    assert len(cases) >= 20
+    assert len(cases) >= 50
 
     run = await EvalHarness(cases).run()
     metrics = run.metrics
@@ -26,6 +26,7 @@ async def test_agent_eval_release_gates() -> None:
     assert metrics["pii_leakage_rate"] == thresholds["pii_leakage_rate"]
     assert metrics["handoff_precision"] >= thresholds["handoff_precision"]
     assert metrics["task_success_rate"] >= thresholds["task_success_rate"]
+    assert metrics["latency_p95_ms"] <= thresholds["end_to_end_p95_ms"]
 
     report_dir = Path(__file__).resolve().parents[1] / "reports"
     report_dir.mkdir(exist_ok=True)

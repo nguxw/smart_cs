@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 from app.agents.graph_runtime import langgraph_status
+from app.core.config import settings
 
 
 class SmartCSGraphState(TypedDict, total=False):
@@ -14,13 +15,7 @@ class SmartCSGraphState(TypedDict, total=False):
 
 
 def build_langgraph_metadata() -> dict[str, Any]:
-    """Expose the SmartCS workflow contract used by the current orchestrator.
-
-    The production path is still driven by AgentOrchestrator. This metadata is
-    intentionally explicit so the future LangGraph migration has a testable
-    node, edge, interrupt, and checkpoint contract without claiming that the
-    installed runtime is already executing real LangGraph nodes.
-    """
+    """Expose the SmartCS live graph contract and runtime metadata."""
 
     nodes = [
         "router",
@@ -31,6 +26,7 @@ def build_langgraph_metadata() -> dict[str, Any]:
         "tool_policy",
         "human_confirm",
         "human_handoff",
+        "skip_optional",
         "guardrail",
         "compose_answer",
         "memory_writer",
@@ -44,10 +40,13 @@ def build_langgraph_metadata() -> dict[str, Any]:
         {"source": "retrieve_policy", "target": "tool_policy", "condition": "always"},
         {"source": "tool_policy", "target": "human_confirm", "condition": "pending_confirmation"},
         {"source": "tool_policy", "target": "human_handoff", "condition": "needs_handoff"},
-        {"source": "tool_policy", "target": "guardrail", "condition": "auto_resolved"},
+        {"source": "tool_policy", "target": "skip_optional", "condition": "auto_resolved"},
         {"source": "human_confirm", "target": "guardrail", "condition": "interrupt_waiting"},
+        {"source": "human_handoff", "target": "compose_answer", "condition": "input_blocked"},
         {"source": "human_handoff", "target": "guardrail", "condition": "ticket_created"},
+        {"source": "skip_optional", "target": "guardrail", "condition": "no_interrupt"},
         {"source": "guardrail", "target": "compose_answer", "condition": "always"},
+        {"source": "compose_answer", "target": "END", "condition": "input_blocked"},
         {"source": "compose_answer", "target": "memory_writer", "condition": "input_allowed"},
         {"source": "memory_writer", "target": "END", "condition": "always"},
     ]
@@ -56,7 +55,10 @@ def build_langgraph_metadata() -> dict[str, Any]:
         "edges": edges,
         "interrupt_nodes": ["human_confirm"],
         "checkpoint_fields": ["conversation_id", "case_id", "task_id", "resume_token"],
-        "execution_mode": "orchestrator_sequence",
+        "execution_mode": "langgraph_state_graph"
+        if settings.agent_runtime.strip().lower() == "langgraph"
+        else "orchestrator_sequence",
+        "default_runtime": settings.agent_runtime,
         "langgraph_available": False,
         "langgraph_runtime": "metadata_only",
         "langgraph_nodes_bound": False,

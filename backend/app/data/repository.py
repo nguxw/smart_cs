@@ -23,6 +23,7 @@ class Order:
     tracking_no: str
     invoice_status: str = "not_requested"
     refund_id: str | None = None
+    tenant_id: str = "demo-tenant"
 
 
 @dataclass
@@ -57,6 +58,7 @@ class Ticket:
     resolution_type: str = ""
     closed_reason: str = ""
     csat_score: int | None = None
+    tenant_id: str = "demo-tenant"
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
 
@@ -119,6 +121,7 @@ class ToolAuditLog:
 class ConversationRecord:
     id: str
     user_id: str
+    tenant_id: str = "demo-tenant"
     messages: list[ChatMessage] = field(default_factory=list)
     agent_steps: list[AgentStep] = field(default_factory=list)
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
@@ -150,6 +153,7 @@ class DemoRepository:
         for user_id, name, tier, preference in seed_users():
             self.users[user_id] = {
                 "user_id": user_id,
+                "tenant_id": "demo-tenant",
                 "name": name,
                 "tier": tier,
                 "preference": preference,
@@ -162,12 +166,19 @@ class DemoRepository:
             return self.users.get(user_id, self.users["anonymous"]).copy()
 
     def get_or_create_conversation(
-        self, conversation_id: str | None, user_id: str
+        self,
+        conversation_id: str | None,
+        user_id: str,
+        tenant_id: str = "demo-tenant",
     ) -> ConversationRecord:
         with self._lock:
             cid = conversation_id or uuid4().hex
             if cid not in self.conversations:
-                self.conversations[cid] = ConversationRecord(id=cid, user_id=user_id)
+                self.conversations[cid] = ConversationRecord(
+                    id=cid,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                )
             return self.conversations[cid]
 
     def append_message(self, conversation_id: str, message: ChatMessage) -> None:
@@ -199,6 +210,7 @@ class DemoRepository:
             return {
                 "id": record.id,
                 "user_id": record.user_id,
+                "tenant_id": record.tenant_id,
                 "summary": record.summary,
                 "messages": [asdict(msg) for msg in record.messages],
                 "agent_steps": [asdict(step) for step in record.agent_steps[-50:]],
@@ -232,6 +244,16 @@ class DemoRepository:
             orders = [order for order in self.orders.values() if order.user_id == user_id]
             sorted_orders = sorted(orders, key=lambda order: order.paid_at, reverse=True)
             return sorted_orders[0] if sorted_orders else None
+
+    def get_order_metadata(self, order_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            order = self.orders.get(order_id)
+            return asdict(order) if order else None
+
+    def get_user_tenant_id(self, user_id: str) -> str | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            return str(user.get("tenant_id")) if user else None
 
     def check_refund_eligibility(self, order_id: str, user_id: str) -> dict[str, Any]:
         order_result = self.query_order(order_id, user_id)
@@ -305,11 +327,13 @@ class DemoRepository:
         resolution_type: str = "",
         closed_reason: str = "",
         csat_score: int | None = None,
+        tenant_id: str = "demo-tenant",
     ) -> dict[str, Any]:
         with self._lock:
             ticket = Ticket(
                 id=f"TK-{uuid4().hex[:8].upper()}",
                 user_id=user_id,
+                tenant_id=tenant_id,
                 title=title,
                 description=description,
                 priority=priority,
@@ -341,7 +365,6 @@ class DemoRepository:
             if ticket is None:
                 return None
             previous_human_reply = ticket.human_reply
-            changed_fields: set[str] = set()
             for field_name in (
                 "status",
                 "priority",
@@ -360,62 +383,13 @@ class DemoRepository:
                 "resolution_type",
                 "closed_reason",
                 "csat_score",
+                "tenant_id",
             ):
                 if field_name in payload and payload[field_name] is not None:
                     setattr(ticket, field_name, payload[field_name])
-                    changed_fields.add(field_name)
             ticket.updated_at = utc_now()
-            linked_cases = [
-                case for case in self.cases.values() if case.related_ticket_id == ticket_id
-            ]
-            human_reply_changed = bool(
-                ticket.human_reply and ticket.human_reply != previous_human_reply
-            )
-            for case in linked_cases:
-                case_changed = False
-                if "priority" in changed_fields:
-                    case.priority = ticket.priority
-                    case_changed = True
-                if "category" in changed_fields:
-                    case.category = ticket.category
-                    case_changed = True
-                if "agent_summary" in changed_fields and ticket.agent_summary:
-                    case.summary = ticket.agent_summary[:180]
-                    case_changed = True
-                if human_reply_changed:
-                    record = self.conversations.get(case.conversation_id)
-                    if record:
-                        record.messages.append(
-                            ChatMessage(role="assistant", content=ticket.human_reply)
-                        )
-                        record.updated_at = utc_now()
-                    case.summary = ticket.human_reply[:180]
-                    case_changed = True
-                if "status" in changed_fields:
-                    if ticket.status == "resolved":
-                        resolution = (
-                            ticket.closed_reason or ticket.resolution_type or ticket.human_reply
-                        )
-                        case.status = "resolved"
-                        case.resolution = resolution or "工单已关闭"
-                    elif ticket.status == "pending":
-                        case.status = "waiting_customer"
-                        case.resolution = ""
-                    else:
-                        case.status = "handoff"
-                        case.resolution = ""
-                    case_changed = True
-                elif ticket.status == "resolved" and changed_fields.intersection(
-                    {"closed_reason", "resolution_type", "human_reply"}
-                ):
-                    resolution = (
-                        ticket.closed_reason or ticket.resolution_type or ticket.human_reply
-                    )
-                    case.status = "resolved"
-                    case.resolution = resolution or "工单已关闭"
-                    case_changed = True
-                if case_changed:
-                    case.updated_at = utc_now()
+            if previous_human_reply != ticket.human_reply:
+                ticket.updated_at = utc_now()
             return asdict(ticket)
 
     def create_or_get_case(
@@ -525,11 +499,6 @@ class DemoRepository:
                 result=result,
             )
             self.tasks[task.id] = task
-            case = self.cases.get(case_id)
-            if case:
-                case.current_task_id = task.id
-                case.status = "waiting_customer" if pending_confirmation else case.status
-                case.updated_at = utc_now()
             return asdict(task)
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
@@ -567,11 +536,6 @@ class DemoRepository:
                 if field_name in payload and payload[field_name] is not None:
                     setattr(task, field_name, payload[field_name])
             task.updated_at = utc_now()
-            case = self.cases.get(task.case_id)
-            if case and payload.get("status") in {"completed", "cancelled"}:
-                case.status = "open"
-                case.current_task_id = None
-                case.updated_at = utc_now()
             return asdict(task)
 
     def get_task_by_resume_token(self, resume_token: str) -> dict[str, Any] | None:

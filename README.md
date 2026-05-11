@@ -57,8 +57,8 @@ end-to-end UI screenshots generated from the running application.
 SmartCS models an AI-assisted support desk for post-purchase commerce operations. The
 agent can identify the customer intent, bind each turn to a service case, retrieve relevant
 policy evidence, call business tools through a policy runtime, pause for customer
-confirmation before side effects, create human tickets when escalation is needed, and
-stream an auditable response back to the console.
+confirmation before side effects, create or reuse human tickets when escalation is needed,
+and stream an auditable response back to the console.
 
 The project focuses on the operational layer around an agent rather than a simple chat
 demo. The main engineering question is: how do we make agent behavior traceable,
@@ -84,20 +84,24 @@ reviewable, testable, and safe enough for customer-service workflows?
 flowchart LR
   Customer["Customer / Support Agent"] --> Console["React ResolutionOps Console"]
   Console --> API["FastAPI SSE API"]
-  API --> Orchestrator["Agent Orchestrator"]
-  Orchestrator --> Plan["ActionPlan"]
-  Orchestrator --> Retrieval["RAG Retrieval"]
-  Orchestrator --> Policy["ToolRuntime + ToolPolicy"]
+  API --> Graph["Live LangGraph StateGraph"]
+  Graph --> Plan["Rule-first ActionPlan"]
+  Graph --> Retrieval["RAG Retrieval"]
+  Graph --> Policy["ToolRuntime + ToolPolicy"]
   Policy --> Tools["MCP-style Business Tools"]
   Tools --> Repository["PostgreSQL or In-memory Repository"]
   API --> Runtime["Redis or In-memory Runtime"]
   Retrieval --> Knowledge["Qdrant or In-memory Knowledge Store"]
-  Orchestrator --> Harness["Regression Evaluation Harness"]
+  Graph --> Harness["Regression Evaluation Harness"]
 ```
 
-The live executor is an explicit orchestrator sequence. A LangGraph-compatible workflow
-contract is exposed as metadata so the runtime can migrate to a graph executor without
-changing the API, tool, or evaluation contracts.
+The default executor is a live LangGraph `StateGraph`. It runs bounded, rule-first node
+handlers and preserves the existing SSE event contract. The compatibility orchestrator
+remains available for parity tests and rollback.
+
+SmartCS is intentionally rule-first for routing, tool selection, and risk boundaries.
+The LLM is used for final response composition; authorization, side effects,
+confirmation, and release gates stay deterministic and auditable.
 
 Workflow sequence:
 
@@ -116,9 +120,9 @@ router -> input_policy -> action_planner -> case_binding -> retrieve_policy
 | Auth and RBAC | Local demo headers in `APP_ENV=local`, HMAC bearer tokens outside local mode, role-scoped API access, and ToolRuntime identity binding. |
 | Tool governance | MCP-style business tools with AuthContext binding, ToolPolicy, risk levels, confirmation boundaries, idempotency keys, and audit logs. |
 | Human confirmation | Medium/high-risk side-effect tools can create pending tasks and resume only after explicit approval. |
-| Human handoff | Unsafe, privacy-sensitive, or operationally complex cases can create support tickets with suggested replies and linked conversations. |
+| Human handoff | Unsafe, privacy-sensitive, or operationally complex cases create or reuse the active open/pending support ticket for the same case or conversation, with suggested replies and linked conversations. |
 | RAG | Seeded knowledge documents, deterministic local embeddings, optional semantic embeddings, Qdrant integration, metadata filters, reranking hooks, and grounding metrics. |
-| Streaming UI | Server-sent events for agent steps, ActionPlan, case/task updates, tool calls, citations, tokens, final state, and errors. |
+| Streaming UI | Server-sent events for agent steps, ActionPlan, case/task updates, tool calls, citations, answer chunks, final state, and errors; the frontend closes streams on `final` or `error`. |
 | Evaluation | Blocking release gates for the unique deterministic fixture set, plus RAG retrieval evals and uploaded CI reports. |
 | Observability | Conversation snapshots, trace detail API, Prometheus-style `/metrics`, tool-call history, Redis stream state, and runtime health metadata. |
 
@@ -127,7 +131,7 @@ router -> input_policy -> action_planner -> case_binding -> retrieve_policy
 | Layer | Technologies |
 | --- | --- |
 | Backend API | Python 3.10+, FastAPI, Pydantic, Uvicorn |
-| Agent runtime | Explicit orchestrator, LangGraph parity adapter, mock LLM, OpenAI-compatible chat-completions client |
+| Agent runtime | Live LangGraph StateGraph, compatibility orchestrator, mock LLM, OpenAI-compatible chat-completions client |
 | Data stores | PostgreSQL adapter, Redis adapter, Qdrant adapter, in-memory fallback stores |
 | Frontend | React 18, TypeScript, Vite, lucide-react, custom operations-console UI |
 | Evaluation | Pytest, deterministic mock provider, JSONL case fixtures, RAG retrieval eval |
@@ -254,11 +258,12 @@ Copy `.env.example` to `.env` for machine-local configuration. `.env` is ignored
 | `LLM_MODEL` / `MODEL_NAME` | `gpt-4o-mini` | Model name passed to the provider. |
 | `OPENAI_API_KEY` | empty | Required for OpenAI-compatible providers. |
 | `OPENAI_BASE_URL` / `OPENAI_API_BASE` | `https://api.openai.com/v1` | OpenAI-compatible chat-completions endpoint. |
+| `LLM_TIMEOUT_S` | `8` | Timeout for OpenAI-compatible and Ollama completions before falling back to a deterministic answer. |
 | `CORS_ORIGINS` | local Vite origins | Comma-separated browser origins allowed by FastAPI. |
 | `CORS_ALLOW_CREDENTIALS` | `true` | Whether CORS credentialed requests are allowed. Do not combine with `*` origins. |
 | `DEMO_HEADER_AUTH_ENABLED` | `true` in local | Enables `X-SmartCS-*` identity headers for local demos only. |
 | `AUTH_TOKEN_SECRET` | local placeholder | HMAC secret for bearer-token auth outside local mode. |
-| `AGENT_RUNTIME` | `orchestrator` | `orchestrator` or `langgraph` parity adapter. |
+| `AGENT_RUNTIME` | `langgraph` | `langgraph` live executor or `orchestrator` compatibility executor. |
 | `DATA_BACKEND` | `postgres` in `.env.example` | `memory`, `postgres`, or `auto`. |
 | `REDIS_BACKEND` | `redis` in `.env.example` | `memory`, `redis`, or `auto`. |
 | `KB_BACKEND` | `qdrant` in `.env.example` | `memory`, `qdrant`, or `auto`. |
@@ -275,6 +280,7 @@ LLM_PROVIDER=openai-compatible
 OPENAI_API_KEY=...
 OPENAI_BASE_URL=https://api.openai.com/v1
 MODEL_NAME=gpt-4o-mini
+LLM_TIMEOUT_S=8
 MOCK_MODE=false
 ```
 
@@ -323,7 +329,7 @@ The evaluation harness reports metrics such as intent accuracy, tool accuracy, t
 argument accuracy, missing-slot accuracy, forbidden-tool violations, citation hit rate,
 groundedness, unsafe request blocking, handoff precision, task success, and latency.
 
-The CI release gate uses the unique JSONL fixtures, currently 22 cases, rather than
+The CI release gate uses the unique JSONL fixtures, currently 51 cases, rather than
 repeating cases to inflate the sample count. See [Evaluation](docs/evaluation.md) and
 [Mock Eval Report](docs/eval_report_mock.md).
 
@@ -343,9 +349,10 @@ repeating cases to inflate the sample count. See [Evaluation](docs/evaluation.md
 | `GET` | `/api/kb/search` | Search the knowledge base. |
 | `POST` | `/api/evals/run` | Run deterministic agent regression cases. |
 | `GET` | `/api/harness/manifest` | Workflow contracts, release gates, and tool metadata. |
+| `GET` | `/api/graph` | Live LangGraph runtime metadata, nodes, edges, and default runtime. |
 | `GET` | `/api/traces/{trace_id}` | Trace-oriented debugging view with graph path, node latency, tools, citations, and guardrail context. |
 | `GET` | `/health` | Runtime backend and provider health. |
-| `GET` | `/metrics` | Prometheus-style API, eval, and tool-runtime metrics. |
+| `GET` | `/metrics` | Prometheus-style API, eval, tool-runtime, first-token, and stream latency metrics. |
 
 ## Deployment Notes
 
@@ -394,16 +401,20 @@ the API.
   replace the HMAC token verifier with JWT/OAuth/session authentication from a real IdP.
 - The default mock LLM is deterministic and useful for tests, but it is not a substitute for live-model evaluation.
 - The local deterministic embedding provider is designed for reproducibility, not semantic quality.
-- The LangGraph adapter exposes a compiled parity contract; the default live executor remains
-  the explicit orchestrator until parity gates are expanded.
+- The agent is rule-first plus LLM-compose; it should not be described as a free-form
+  autonomous planner.
+- Live model providers currently use non-streaming chat completions. Runtime events stream
+  immediately, but answer chunks are emitted after composition finishes; use
+  `LLM_TIMEOUT_S` to keep local demos responsive.
 - Seed data is synthetic and optimized for demo coverage rather than business realism.
 
 ## Roadmap
 
-- Bind the current workflow contract to a live LangGraph executor.
-- Add role-based access control for agent, supervisor, and admin personas.
+- Add live-model shadow evaluation and badcase trend comparison.
+- Move PostgreSQL schema creation to Alembic migrations.
 - Add persistent eval-run storage and trend comparison between prompt/model versions.
 - Add richer ticket collaboration features such as internal notes and SLA timers.
+- Add provider-token streaming for live LLM responses.
 - Add deployment manifests for a cloud target.
 
 ## License

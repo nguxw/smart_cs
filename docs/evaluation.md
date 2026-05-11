@@ -4,7 +4,7 @@ SmartCS treats agent behavior as a release surface. Prompt, tool, model, and KB 
 
 ## Case Set
 
-The current gate uses the unique JSONL fixtures in `backend/app/evals/cases/` rather than repeating cases to inflate the sample count. At the time of writing, the set contains 22 deterministic cases across intent routing, tool calls, tool arguments, missing slots, RAG grounding, safety, multi-turn behavior, and human handoff.
+The current gate uses the unique JSONL fixtures in `backend/app/evals/cases/` rather than repeating cases to inflate the sample count. At the time of writing, the set contains 51 deterministic cases across intent routing, tool calls, tool arguments, missing slots, RAG grounding, prompt-injection variants, tenant/authorization behavior, multi-turn behavior, and human handoff.
 
 ## Blocking Metrics
 

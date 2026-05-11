@@ -29,12 +29,12 @@ SIDE_EFFECT_TOOLS = {
     name for name, risk_level in TOOL_RISK_LEVELS.items() if risk_level != ToolRiskLevel.READ_ONLY
 }
 TOOL_PERMISSIONS = {
-    "query_order": "order:read:self",
-    "check_refund_eligibility": "refund:create:self",
-    "create_refund": "refund:create:self",
-    "query_invoice": "invoice:read:self",
-    "create_ticket": "ticket:create:self",
-    "handoff_to_human": "ticket:create:self",
+    "query_order": ("order:read:self", "order:read:tenant"),
+    "check_refund_eligibility": ("refund:create:self",),
+    "create_refund": ("refund:create:self",),
+    "query_invoice": ("invoice:read:self", "invoice:read:tenant"),
+    "create_ticket": ("ticket:create:self", "ticket:create:tenant"),
+    "handoff_to_human": ("ticket:create:self", "ticket:create:tenant"),
 }
 
 
@@ -79,14 +79,22 @@ class ToolPolicy:
                 policy_rules_hit=("schema.required",),
             )
 
-        permission = TOOL_PERMISSIONS.get(tool_name)
-        if permission and not auth_context.has_permission(permission):
+        permissions = TOOL_PERMISSIONS.get(tool_name, ())
+        if permissions and not self._has_tool_permission(
+            tool_name,
+            arguments,
+            auth_context,
+            permissions,
+        ):
             return ToolPolicyDecision(
                 False,
                 "permission_denied",
-                f"Missing permission: {permission}",
+                f"Missing one of permissions: {', '.join(permissions)}",
                 risk_level=TOOL_RISK_LEVELS.get(tool_name, ToolRiskLevel.READ_ONLY),
                 subject_user_id=auth_context.user_id,
+                resource_id=str(
+                    arguments.get("order_id") or arguments.get("conversation_id") or ""
+                ),
                 policy_rules_hit=("rbac.permission",),
             )
 
@@ -114,6 +122,29 @@ class ToolPolicy:
             resource_id=str(arguments.get("order_id") or arguments.get("conversation_id") or ""),
             policy_rules_hit=("risk.approved",),
         )
+
+    def _has_tool_permission(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        auth_context: AuthContext,
+        permissions: tuple[str, ...],
+    ) -> bool:
+        if auth_context.has_permission("*"):
+            return True
+        order = _order_for_arguments(arguments, self.registry.repository)
+        resource_user_id = str(
+            (order or {}).get("user_id") or arguments.get("user_id") or auth_context.user_id
+        )
+        resource_tenant_id = _resource_tenant_id(self.registry.repository, tool_name, arguments)
+        for permission in permissions:
+            if not auth_context.has_permission(permission):
+                continue
+            if permission.endswith(":self") and resource_user_id == auth_context.user_id:
+                return True
+            if permission.endswith(":tenant") and resource_tenant_id == auth_context.tenant_id:
+                return True
+        return False
 
 
 class ToolRuntime:
@@ -229,8 +260,8 @@ class ToolRuntime:
         )
         return call
 
-    @staticmethod
     def _bind_identity(
+        self,
         tool_name: str,
         arguments: dict[str, Any],
         auth_context: AuthContext,
@@ -238,11 +269,74 @@ class ToolRuntime:
         safe_arguments = dict(arguments)
         if tool_name in {
             "query_order",
+            "query_invoice",
+        }:
+            if auth_context.has_permission("order:read:tenant") or auth_context.has_permission(
+                "invoice:read:tenant"
+            ):
+                order = _order_for_arguments(arguments, self.repository)
+                if order and order.get("tenant_id") == auth_context.tenant_id:
+                    safe_arguments["user_id"] = order["user_id"]
+                    return safe_arguments
+            safe_arguments["user_id"] = auth_context.user_id
+        if tool_name in {
             "check_refund_eligibility",
             "create_refund",
-            "query_invoice",
+        }:
+            safe_arguments["user_id"] = auth_context.user_id
+        if tool_name in {
             "create_ticket",
             "handoff_to_human",
         }:
-            safe_arguments["user_id"] = auth_context.user_id
+            requested_user_id = str(safe_arguments.get("user_id") or auth_context.user_id)
+            if (
+                auth_context.has_permission("ticket:create:tenant")
+                and _user_tenant_id(self.repository, requested_user_id) == auth_context.tenant_id
+            ):
+                safe_arguments["user_id"] = requested_user_id
+            else:
+                safe_arguments["user_id"] = auth_context.user_id
+            safe_arguments["tenant_id"] = auth_context.tenant_id
         return safe_arguments
+
+
+def _order_for_arguments(
+    arguments: dict[str, Any],
+    repository: Any | None,
+) -> dict[str, Any] | None:
+    order_id = arguments.get("order_id")
+    if not order_id or repository is None:
+        return None
+    if hasattr(repository, "get_order_metadata"):
+        order = repository.get_order_metadata(str(order_id))
+        return dict(order) if order else None
+    orders = getattr(repository, "orders", None)
+    if isinstance(orders, dict) and order_id in orders:
+        order = orders[order_id]
+        return {
+            "id": order.id,
+            "user_id": order.user_id,
+            "tenant_id": getattr(order, "tenant_id", "demo-tenant"),
+        }
+    return None
+
+
+def _resource_tenant_id(repository: Any, tool_name: str, arguments: dict[str, Any]) -> str:
+    if tool_name in {"query_order", "query_invoice", "check_refund_eligibility", "create_refund"}:
+        order = _order_for_arguments(arguments, repository)
+        if order:
+            return str(order.get("tenant_id") or "demo-tenant")
+    return str(arguments.get("tenant_id") or "demo-tenant")
+
+
+def _user_tenant_id(repository: Any | None, user_id: str) -> str:
+    if repository is not None and hasattr(repository, "get_user_tenant_id"):
+        tenant_id = repository.get_user_tenant_id(user_id)
+        if tenant_id:
+            return tenant_id
+    users = getattr(repository, "users", None) if repository is not None else None
+    if isinstance(users, dict):
+        user = users.get(user_id)
+        if isinstance(user, dict):
+            return str(user.get("tenant_id") or "demo-tenant")
+    return "demo-tenant"

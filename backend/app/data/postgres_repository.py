@@ -4,9 +4,17 @@ from dataclasses import asdict
 from typing import Any
 from uuid import uuid4
 
-import psycopg
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+    from psycopg.types.json import Jsonb
+except ModuleNotFoundError:  # pragma: no cover - optional adapter dependency
+    psycopg = None  # type: ignore[assignment]
+    dict_row = None  # type: ignore[assignment]
+
+    class Jsonb:  # type: ignore[no-redef]
+        def __init__(self, value: Any) -> None:
+            self.value = value
 
 from app.data.repository import ConversationRecord, Order, Refund, Ticket
 from app.data.seed import seed_orders, seed_users
@@ -21,11 +29,13 @@ POSTGRES_SCHEMA_DDL = [
     """
     CREATE TABLE IF NOT EXISTS users (
         user_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT 'demo-tenant',
         name TEXT NOT NULL,
         tier TEXT NOT NULL,
         preference TEXT NOT NULL
     )
     """,
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'demo-tenant'",
     """
     CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
@@ -38,9 +48,11 @@ POSTGRES_SCHEMA_DDL = [
         carrier TEXT NOT NULL,
         tracking_no TEXT NOT NULL,
         invoice_status TEXT NOT NULL DEFAULT 'not_requested',
-        refund_id TEXT
+        refund_id TEXT,
+        tenant_id TEXT NOT NULL DEFAULT 'demo-tenant'
     )
     """,
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'demo-tenant'",
     """
     CREATE TABLE IF NOT EXISTS refunds (
         id TEXT PRIMARY KEY,
@@ -56,6 +68,7 @@ POSTGRES_SCHEMA_DDL = [
     CREATE TABLE IF NOT EXISTS tickets (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(user_id),
+        tenant_id TEXT NOT NULL DEFAULT 'demo-tenant',
         title TEXT NOT NULL,
         description TEXT NOT NULL,
         priority TEXT NOT NULL,
@@ -65,6 +78,7 @@ POSTGRES_SCHEMA_DDL = [
         updated_at TEXT NOT NULL
     )
     """,
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'demo-tenant'",
     "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT",
     "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS assignee_name TEXT",
     "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_deadline TEXT",
@@ -87,9 +101,14 @@ POSTGRES_SCHEMA_DDL = [
     CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(user_id),
+        tenant_id TEXT NOT NULL DEFAULT 'demo-tenant',
         summary TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL
     )
+    """,
+    """
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS tenant_id
+        TEXT NOT NULL DEFAULT 'demo-tenant'
     """,
     """
     CREATE TABLE IF NOT EXISTS messages (
@@ -207,6 +226,8 @@ class PostgresRepository:
         self._seed()
 
     def _connect(self):
+        if psycopg is None:
+            raise RuntimeError("Install psycopg to use the PostgreSQL repository adapter")
         return psycopg.connect(self.database_url, row_factory=dict_row, connect_timeout=2)
 
     def ping(self) -> bool:
@@ -224,61 +245,79 @@ class PostgresRepository:
             for user_id, name, tier, preference in seed_users():
                 conn.execute(
                     """
-                    INSERT INTO users (user_id, name, tier, preference)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO users (user_id, tenant_id, name, tier, preference)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (user_id) DO NOTHING
                     """,
-                    (user_id, name, tier, preference),
+                    (user_id, "demo-tenant", name, tier, preference),
                 )
             for row in seed_orders():
                 conn.execute(
                     """
                     INSERT INTO orders (
                         id, user_id, item, amount, status, paid_at, delivered_at,
-                        carrier, tracking_no, invoice_status, refund_id
+                        carrier, tracking_no, invoice_status, refund_id, tenant_id
                     )
                     VALUES (%(id)s, %(user_id)s, %(item)s, %(amount)s, %(status)s,
                             %(paid_at)s, %(delivered_at)s, %(carrier)s, %(tracking_no)s,
-                            %(invoice_status)s, %(refund_id)s)
+                            %(invoice_status)s, %(refund_id)s, %(tenant_id)s)
                     ON CONFLICT (id) DO NOTHING
                     """,
                     {
                         **row,
                         "invoice_status": row.get("invoice_status", "not_requested"),
                         "refund_id": row.get("refund_id"),
+                        "tenant_id": row.get("tenant_id", "demo-tenant"),
                     },
                 )
 
     def get_user_profile(self, user_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT user_id, name, tier, preference FROM users WHERE user_id = %s",
+                "SELECT user_id, tenant_id, name, tier, preference FROM users WHERE user_id = %s",
                 (user_id,),
             ).fetchone()
             if row is None:
                 row = conn.execute(
-                    "SELECT user_id, name, tier, preference FROM users WHERE user_id = %s",
+                    """
+                    SELECT user_id, tenant_id, name, tier, preference
+                    FROM users
+                    WHERE user_id = %s
+                    """,
                     ("anonymous",),
                 ).fetchone()
-        return dict(row or {"user_id": "anonymous", "name": "访客用户", "tier": "guest"})
+        return dict(
+            row
+            or {
+                "user_id": "anonymous",
+                "tenant_id": "demo-tenant",
+                "name": "访客用户",
+                "tier": "guest",
+            }
+        )
 
     def get_or_create_conversation(
         self,
         conversation_id: str | None,
         user_id: str,
+        tenant_id: str = "demo-tenant",
     ) -> ConversationRecord:
         cid = conversation_id or uuid4().hex
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO conversations (id, user_id, summary, updated_at)
-                VALUES (%s, %s, '', %s)
+                INSERT INTO conversations (id, user_id, tenant_id, summary, updated_at)
+                VALUES (%s, %s, %s, '', %s)
                 ON CONFLICT (id) DO NOTHING
                 """,
-                (cid, user_id, utc_now()),
+                (cid, user_id, tenant_id, utc_now()),
             )
             record = conn.execute(
-                "SELECT id, user_id, summary, updated_at FROM conversations WHERE id = %s",
+                """
+                SELECT id, user_id, tenant_id, summary, updated_at
+                FROM conversations
+                WHERE id = %s
+                """,
                 (cid,),
             ).fetchone()
             messages = conn.execute(
@@ -293,6 +332,7 @@ class PostgresRepository:
         return ConversationRecord(
             id=record["id"],
             user_id=record["user_id"],
+            tenant_id=record["tenant_id"],
             summary=record["summary"],
             updated_at=record["updated_at"],
             messages=[
@@ -378,7 +418,11 @@ class PostgresRepository:
     def conversation_snapshot(self, conversation_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             record = conn.execute(
-                "SELECT id, user_id, summary, updated_at FROM conversations WHERE id = %s",
+                """
+                SELECT id, user_id, tenant_id, summary, updated_at
+                FROM conversations
+                WHERE id = %s
+                """,
                 (conversation_id,),
             ).fetchone()
             if record is None:
@@ -446,6 +490,7 @@ class PostgresRepository:
         return {
             "id": record["id"],
             "user_id": record["user_id"],
+            "tenant_id": record["tenant_id"],
             "summary": record["summary"],
             "messages": [dict(row) for row in messages],
             "agent_steps": [dict(row) for row in reversed(steps)],
@@ -477,6 +522,19 @@ class PostgresRepository:
                 (user_id,),
             ).fetchone()
         return _order_from_row(row) if row else None
+
+    def get_order_metadata(self, order_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM orders WHERE id = %s", (order_id,)).fetchone()
+        return _order_dict(row) if row else None
+
+    def get_user_tenant_id(self, user_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT tenant_id FROM users WHERE user_id = %s",
+                (user_id,),
+            ).fetchone()
+        return str(row["tenant_id"]) if row else None
 
     def check_refund_eligibility(self, order_id: str, user_id: str) -> dict[str, Any]:
         order_result = self.query_order(order_id, user_id)
@@ -570,10 +628,12 @@ class PostgresRepository:
         resolution_type: str = "",
         closed_reason: str = "",
         csat_score: int | None = None,
+        tenant_id: str = "demo-tenant",
     ) -> dict[str, Any]:
         ticket = Ticket(
             id=f"TK-{uuid4().hex[:8].upper()}",
             user_id=user_id,
+            tenant_id=tenant_id,
             title=title,
             description=description,
             priority=priority,
@@ -595,7 +655,7 @@ class PostgresRepository:
             conn.execute(
                 """
                 INSERT INTO tickets (
-                    id, user_id, title, description, priority, category,
+                    id, user_id, tenant_id, title, description, priority, category,
                     status, assigned_to, assignee_name, sla_deadline, handoff_reason,
                     agent_summary, customer_emotion, latest_customer_message,
                     suggested_reply, human_reply, resolution_type, closed_reason,
@@ -603,12 +663,13 @@ class PostgresRepository:
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
                     ticket.id,
                     ticket.user_id,
+                    ticket.tenant_id,
                     ticket.title,
                     ticket.description,
                     ticket.priority,
@@ -640,11 +701,11 @@ class PostgresRepository:
         return [dict(row) for row in rows]
 
     def update_ticket(self, ticket_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        sync_human_reply = "human_reply" in payload and bool(payload.get("human_reply"))
         fields = [
             field_name
             for field_name in (
                 "status",
+                "tenant_id",
                 "priority",
                 "category",
                 "title",
@@ -684,74 +745,6 @@ class PostgresRepository:
             ).fetchone()
             if row is None:
                 return None
-            human_reply_changed = (
-                sync_human_reply and payload.get("human_reply") != previous.get("human_reply")
-            )
-            if human_reply_changed:
-                linked_cases = conn.execute(
-                    "SELECT id, conversation_id FROM cases WHERE related_ticket_id = %s",
-                    (ticket_id,),
-                ).fetchall()
-                for case in linked_cases:
-                    now = utc_now()
-                    conn.execute(
-                        """
-                        INSERT INTO messages (conversation_id, role, content, created_at)
-                        VALUES (%s, 'assistant', %s, %s)
-                        """,
-                        (case["conversation_id"], payload["human_reply"], now),
-                    )
-                    conn.execute(
-                        """
-                        UPDATE conversations SET updated_at = %s WHERE id = %s
-                        """,
-                        (now, case["conversation_id"]),
-                    )
-            case_updates: dict[str, Any] = {}
-            if "priority" in fields:
-                case_updates["priority"] = row["priority"]
-            if "category" in fields:
-                case_updates["category"] = row["category"]
-            if human_reply_changed:
-                case_updates["summary"] = str(row["human_reply"])[:180]
-            elif "agent_summary" in fields and row.get("agent_summary"):
-                case_updates["summary"] = str(row["agent_summary"])[:180]
-            if "status" in fields:
-                if row["status"] == "resolved":
-                    case_updates["status"] = "resolved"
-                    case_updates["resolution"] = (
-                        row.get("closed_reason")
-                        or row.get("resolution_type")
-                        or row.get("human_reply")
-                        or "工单已关闭"
-                    )
-                elif row["status"] == "pending":
-                    case_updates["status"] = "waiting_customer"
-                    case_updates["resolution"] = ""
-                else:
-                    case_updates["status"] = "handoff"
-                    case_updates["resolution"] = ""
-            elif row["status"] == "resolved" and set(fields).intersection(
-                {"closed_reason", "resolution_type", "human_reply"}
-            ):
-                case_updates["status"] = "resolved"
-                case_updates["resolution"] = (
-                    row.get("closed_reason")
-                    or row.get("resolution_type")
-                    or row.get("human_reply")
-                    or "工单已关闭"
-                )
-            if case_updates:
-                assignments = ", ".join(f"{field_name} = %s" for field_name in case_updates)
-                values = [*case_updates.values(), utc_now(), ticket_id]
-                conn.execute(
-                    f"""
-                    UPDATE cases
-                    SET {assignments}, updated_at = %s
-                    WHERE related_ticket_id = %s
-                    """,
-                    values,
-                )
         return dict(row) if row else None
 
     def create_or_get_case(
@@ -929,21 +922,6 @@ class PostgresRepository:
                     now,
                 ),
             ).fetchone()
-            conn.execute(
-                """
-                UPDATE cases
-                SET current_task_id = %s,
-                    status = CASE WHEN %s THEN 'waiting_customer' ELSE status END,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (
-                    task_id,
-                    pending_confirmation is not None,
-                    now,
-                    case_id,
-                ),
-            )
         return dict(row)
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
@@ -1005,15 +983,6 @@ class PostgresRepository:
                 """,
                 values,
             ).fetchone()
-            if row and payload.get("status") in {"completed", "cancelled"}:
-                conn.execute(
-                    """
-                    UPDATE cases
-                    SET status = 'open', current_task_id = NULL, updated_at = %s
-                    WHERE id = %s
-                    """,
-                    (utc_now(), row["case_id"]),
-                )
         return dict(row) if row else None
 
     def get_task_by_resume_token(self, resume_token: str) -> dict[str, Any] | None:
@@ -1144,6 +1113,7 @@ def _order_from_row(row: dict[str, Any]) -> Order:
         tracking_no=row["tracking_no"],
         invoice_status=row["invoice_status"],
         refund_id=row["refund_id"],
+        tenant_id=row.get("tenant_id", "demo-tenant"),
     )
 
 

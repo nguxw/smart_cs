@@ -22,15 +22,18 @@ def classify_intent(message: str) -> Intent:
         return "handoff"
     if any(word in message for word in ("发票", "开票", "票据", "invoice")):
         return "invoice"
-    if any(word in message for word in ("退款", "退货", "退回", "售后", "refund", "return")):
+    if any(word in message for word in ("坏了", "破损", "质量", "维修", "保修", "换货")):
+        return "ticket"
+    if any(
+        word in message
+        for word in ("退款", "退货", "退回", "无理由退", "售后", "refund", "return")
+    ):
         return "refund"
     if any(
         word in message
         for word in ("订单", "物流", "快递", "配送", "到哪", "order", "tracking")
     ):
         return "order"
-    if any(word in message for word in ("坏了", "破损", "质量", "维修", "保修", "换货")):
-        return "ticket"
     if "ord-" in text:
         return "order"
     return "faq"

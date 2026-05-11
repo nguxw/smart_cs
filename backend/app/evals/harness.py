@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.agents.graph_runtime import create_agent_runtime
 from app.agents.orchestrator import AgentOrchestrator
 from app.data.repository import DemoRepository
 from app.llm.provider import MockLLMProvider
@@ -23,6 +24,7 @@ class EvalCase:
     message: str
     user_id: str
     expected_intent: str
+    messages: tuple[str, ...] = ()
     expected_tools: tuple[str, ...] = ()
     forbidden_tools: tuple[str, ...] = ()
     expected_arguments: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -54,14 +56,16 @@ def load_eval_cases() -> list[EvalCase]:
             if not line.strip():
                 continue
             payload = json.loads(line)
-            if "message" not in payload:
+            if "message" not in payload and "messages" not in payload:
                 continue
+            messages = tuple(str(message) for message in payload.get("messages", ()))
             cases.append(
                 EvalCase(
                     id=str(payload["id"]),
-                    message=str(payload["message"]),
+                    message=str(payload.get("message") or messages[-1]),
                     user_id=str(payload.get("user_id", "u_1001")),
                     expected_intent=str(payload["expected_intent"]),
+                    messages=messages,
                     expected_tools=tuple(payload.get("expected_tools", ())),
                     forbidden_tools=tuple(payload.get("forbidden_tools", ())),
                     expected_arguments=dict(payload.get("expected_arguments") or {}),
@@ -96,6 +100,7 @@ def build_eval_cases(size: int = 120) -> list[EvalCase]:
             message=source[index % len(source)].message,
             user_id=source[index % len(source)].user_id,
             expected_intent=source[index % len(source)].expected_intent,
+            messages=source[index % len(source)].messages,
             expected_tools=source[index % len(source)].expected_tools,
             forbidden_tools=source[index % len(source)].forbidden_tools,
             expected_arguments=source[index % len(source)].expected_arguments,
@@ -124,9 +129,23 @@ class EvalHarness:
             repository = DemoRepository()
             store = create_seeded_knowledge_store()
             tools = BusinessToolRegistry(repository)
-            orchestrator = AgentOrchestrator(repository, store, tools, MockLLMProvider())
+            base_orchestrator = AgentOrchestrator(repository, store, tools, MockLLMProvider())
+            orchestrator = create_agent_runtime(
+                runtime_name="langgraph",
+                orchestrator=base_orchestrator,
+            )
             start = time.perf_counter()
-            state = await orchestrator.run_once(case.message, user_id=case.user_id)
+            state = None
+            conversation_id: str | None = None
+            for message in case.messages or (case.message,):
+                state = await orchestrator.run_once(
+                    message,
+                    user_id=case.user_id,
+                    conversation_id=conversation_id,
+                )
+                conversation_id = state.conversation_id
+            if state is None:  # pragma: no cover - defensive
+                raise RuntimeError(f"Eval case {case.id} did not execute")
             latency_ms = (time.perf_counter() - start) * 1000
             latencies.append(latency_ms)
             turn_counts.append(len([msg for msg in state.messages if msg.role == "user"]))

@@ -32,6 +32,18 @@ Push-Location $Root
 try {
     Invoke-Step "ruff" { & $Python -m ruff check backend/app backend/tests }
     Invoke-Step "mypy" { & $Python -m mypy backend/app --ignore-missing-imports }
+
+    if ($WithServices) {
+        Invoke-Step "docker services" { docker compose up -d postgres redis qdrant }
+        $env:SMARTCS_RUN_INTEGRATION = "1"
+        $env:DATA_BACKEND = "postgres"
+        $env:REDIS_BACKEND = "redis"
+        $env:KB_BACKEND = "qdrant"
+        $env:DATABASE_URL = "postgresql+psycopg://smartcs:smartcs@localhost:5432/smartcs"
+        $env:REDIS_URL = "redis://localhost:6379/0"
+        $env:QDRANT_URL = "http://localhost:6333"
+    }
+
     Invoke-Step "pytest" { & $Python -m pytest backend }
     Invoke-Step "frontend build" {
         Push-Location (Join-Path $Root "frontend")
@@ -53,14 +65,6 @@ try {
     }
 
     if ($WithServices) {
-        Invoke-Step "docker services" { docker compose up -d postgres redis qdrant }
-        $env:DATA_BACKEND = "postgres"
-        $env:REDIS_BACKEND = "redis"
-        $env:KB_BACKEND = "qdrant"
-        $env:DATABASE_URL = "postgresql+psycopg://smartcs:smartcs@localhost:5432/smartcs"
-        $env:REDIS_URL = "redis://localhost:6379/0"
-        $env:QDRANT_URL = "http://localhost:6333"
-
         & $Python scripts/check_health.py `
             --url $ApiUrl `
             --expect repository_backend=postgresql `
