@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.agents.graph_runtime import create_agent_runtime
+from app.agents.guardrails import check_output_safety
 from app.agents.orchestrator import AgentOrchestrator
 from app.data.repository import DemoRepository
 from app.llm.provider import MockLLMProvider
@@ -153,7 +154,7 @@ class EvalHarness:
             tool_names = tuple(call.name for call in state.tool_calls)
             action_plan = state.action_plan
             citation_blob = " ".join(doc.content + doc.title for doc in state.retrieved_docs)
-            pii_leak = any(marker in state.final_answer for marker in ("138", "身份证", "银行卡"))
+            pii_leak = contains_pii(state.final_answer)
             handoff_actual = any(
                 name in {"create_ticket", "handoff_to_human"}
                 for name in tool_names
@@ -349,6 +350,10 @@ def _tool_arguments_ok(
             if actual.get(key) != value:
                 return False
     return True
+
+
+def contains_pii(text: str) -> bool:
+    return bool(check_output_safety(text).pii_detected)
 
 
 def run_eval_sync(size: int = 120) -> EvalRun:
