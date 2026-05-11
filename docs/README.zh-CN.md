@@ -1,16 +1,35 @@
-# SmartCS ResolutionOps Console
+<div align="center">
 
-[![CI](https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml/badge.svg)](https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)
-![FastAPI](https://img.shields.io/badge/FastAPI-Agent%20API-009688)
-![React](https://img.shields.io/badge/React-18-61DAFB)
-![License](https://img.shields.io/badge/License-MIT-green)
+<h1 align="center">SmartCS ResolutionOps Console</h1>
 
-SmartCS ResolutionOps Console 是一个面向电商售后场景的全栈 AI 客服运营平台。它展示了如何把 LLM Agent 包装在显式工作流、受控业务工具、服务案件状态、RAG 证据、人工确认、可观测性和回归评测体系之中。
+<p align="center">
+  <a href="https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB">
+  <img alt="FastAPI Agent API" src="https://img.shields.io/badge/FastAPI-Agent%20API-009688">
+  <img alt="React 18" src="https://img.shields.io/badge/React-18-61DAFB">
+  <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-green">
+</p>
 
-这个仓库按正式工程作品组织：默认可以无 API Key 本地运行，也可以通过 Docker Compose 切换到 PostgreSQL、Redis、Qdrant 等真实服务，并且 README 中的截图来自实际运行的本地应用。
+<p align="center"><strong>面向电商售后流程的 AI 客服运营控制台，强调治理、可观测性与可回归评测。</strong></p>
 
-[English README](../README.md) | [架构说明](architecture.md) | [简历要点](resume_notes.md) | [MIT License](../LICENSE)
+<p align="center">
+SmartCS ResolutionOps Console 展示了如何把 LLM Agent 包装在显式工作流、
+受控业务工具、服务案件状态、RAG 证据、人工确认、可观测性和回归评测体系之中。
+</p>
+
+<p align="center">
+这个仓库按正式工程作品组织：默认可以无 API Key 本地运行，也可以通过 Docker Compose
+切换到 PostgreSQL、Redis、Qdrant 等真实服务，并且 README 中的截图来自实际运行的本地应用。
+</p>
+
+<p align="center">
+  <a href="../README.md">English README</a> ·
+  <a href="architecture.md">架构说明</a> ·
+  <a href="resume_notes.md">简历要点</a> ·
+  <a href="../LICENSE">MIT License</a>
+</p>
+
+</div>
 
 ## 目录
 

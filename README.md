@@ -1,21 +1,37 @@
-# SmartCS ResolutionOps Console
+<div align="center">
 
-[![CI](https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml/badge.svg)](https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)
-![FastAPI](https://img.shields.io/badge/FastAPI-Agent%20API-009688)
-![React](https://img.shields.io/badge/React-18-61DAFB)
-![License](https://img.shields.io/badge/License-MIT-green)
+<h1 align="center">SmartCS ResolutionOps Console</h1>
 
-SmartCS ResolutionOps Console is a full-stack AI customer support operations platform for
-e-commerce after-sales workflows. It demonstrates how an LLM agent can be wrapped with
-explicit workflow contracts, governed business tools, service-case state, RAG evidence,
-human confirmation, observability, and regression evaluation.
+<p align="center">
+  <a href="https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Nguxw/Smart_CS/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB">
+  <img alt="FastAPI Agent API" src="https://img.shields.io/badge/FastAPI-Agent%20API-009688">
+  <img alt="React 18" src="https://img.shields.io/badge/React-18-61DAFB">
+  <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-green">
+</p>
 
-The repository is designed to be reviewed as a production-style portfolio project: it runs
-locally without API keys, can switch to real infrastructure through Docker Compose, and
-includes end-to-end UI screenshots generated from the running application.
+<p align="center"><strong>AI customer support operations console for governed, observable after-sales workflows.</strong></p>
 
-[中文说明](docs/README.zh-CN.md) | [Architecture Notes](docs/architecture.md) | [Resume Notes](docs/resume_notes.md) | [MIT License](LICENSE)
+<p align="center">
+SmartCS demonstrates how an LLM agent can be wrapped with explicit workflow contracts,
+governed business tools, service-case state, RAG evidence, human confirmation,
+observability, and regression evaluation.
+</p>
+
+<p align="center">
+The repository is designed as a production-style portfolio project: it runs locally without
+API keys, can switch to real infrastructure through Docker Compose, and includes
+end-to-end UI screenshots generated from the running application.
+</p>
+
+<p align="center">
+  <a href="docs/README.zh-CN.md">中文说明</a> ·
+  <a href="docs/architecture.md">Architecture Notes</a> ·
+  <a href="docs/resume_notes.md">Resume Notes</a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
+
+</div>
 
 ## Table of Contents
 
