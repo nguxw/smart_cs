@@ -38,7 +38,11 @@ export function App() {
   const ticketThreadConversation = tickets.thread?.conversation;
   const refreshTicketThread = tickets.refreshThread;
   const refreshOperations = useCallback(async () => {
-    await Promise.all([tickets.refresh(), cases.refresh()]);
+    try {
+      await Promise.all([tickets.refresh(), cases.refresh()]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "运营数据刷新失败");
+    }
   }, [cases.refresh, tickets.refresh]);
   const navigateToTab = useCallback((nextTab: TabKey) => {
     setActiveTab(nextTab);
@@ -48,18 +52,29 @@ export function App() {
   }, []);
   const saveTicketAndRefreshCases = useCallback(
     async (ticketId: string, payload: Partial<Ticket>) => {
-      const updated = await tickets.saveTicket(ticketId, payload);
-      await cases.refresh();
-      return updated;
+      setError(null);
+      try {
+        const updated = await tickets.saveTicket(ticketId, payload);
+        await cases.refresh();
+        return updated;
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "工单保存失败");
+        return null;
+      }
     },
     [cases.refresh, tickets.saveTicket]
   );
   const chat = useChatStream(userId, refreshOperations);
   const openTicketConversation = useCallback(
     async (conversationId: string, nextUserId: string) => {
-      setUserId(nextUserId);
-      await chat.loadConversation(conversationId);
-      navigateToTab("desk");
+      setError(null);
+      try {
+        await chat.loadConversation(conversationId, { userIdOverride: nextUserId });
+        setUserId(nextUserId);
+        navigateToTab("desk");
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "关联会话打开失败");
+      }
     },
     [chat.loadConversation, navigateToTab]
   );
@@ -106,7 +121,7 @@ export function App() {
 
   const ticketStats = tickets.stats;
   const caseStats = cases.stats;
-  const activeError = error ?? chat.error ?? cases.error;
+  const activeError = error ?? chat.error ?? cases.error ?? tickets.error;
 
   const metrics = useMemo(
     () => [
@@ -240,7 +255,11 @@ export function App() {
             threadBusy={tickets.threadBusy}
             onSelectTicket={tickets.setSelectedTicketId}
             onSaveTicket={saveTicketAndRefreshCases}
-            onRefreshThread={() => void tickets.refreshThread()}
+            onRefreshThread={() => {
+              void tickets.refreshThread().catch((cause) => {
+                setError(cause instanceof Error ? cause.message : "关联会话刷新失败");
+              });
+            }}
             onOpenConversation={(conversationId, conversationUserId) =>
               void openTicketConversation(conversationId, conversationUserId)
             }

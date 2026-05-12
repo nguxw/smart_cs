@@ -19,6 +19,42 @@ class MockLLMProvider:
     model: str = "mock-smartcs"
 
     async def complete(self, system_prompt: str, user_prompt: str) -> str:
+        system_lower = system_prompt.lower()
+        if "intent classifier" in system_lower and "json" in system_lower:
+            from app.agents.router import classify_intent, extract_order_id
+
+            return json.dumps(
+                {
+                    "intent": classify_intent(user_prompt),
+                    "confidence": 0.84,
+                    "order_id": extract_order_id(user_prompt),
+                    "reason": "mock_router",
+                },
+                ensure_ascii=False,
+            )
+        if "candidate actionplan json" in system_lower:
+            from app.agents.planner import build_action_plan
+            from app.agents.router import extract_order_id
+
+            intent = _extract_current_intent(user_prompt)
+            order_id = extract_order_id(user_prompt)
+            plan = build_action_plan(user_prompt, intent, order_id)  # type: ignore[arg-type]
+            return json.dumps(
+                {
+                    "intent": plan.intent,
+                    "confidence": plan.confidence,
+                    "slots": plan.slots,
+                    "required_tools": plan.required_tools,
+                    "missing_slots": plan.missing_slots,
+                    "risk_level": plan.risk_level,
+                    "requires_confirmation": plan.requires_confirmation,
+                    "requires_handoff": plan.requires_handoff,
+                    "reason": "mock_planner",
+                },
+                ensure_ascii=False,
+            )
+        if "knowledge-base" in system_lower and "search queries" in system_lower:
+            return _extract_user_message(user_prompt)
         lower = user_prompt.lower()
         if "json" in system_prompt.lower() and "intent" in lower:
             return json.dumps({"intent": "faq", "confidence": 0.82}, ensure_ascii=False)
@@ -107,3 +143,17 @@ def create_llm_provider(settings: Settings) -> LLMProvider:
             timeout_s=settings.llm_timeout_s,
         )
     return MockLLMProvider(model=settings.llm_model)
+
+
+def _extract_current_intent(prompt: str) -> str:
+    for line in prompt.splitlines():
+        if line.lower().startswith("current intent:"):
+            return line.split(":", 1)[1].strip() or "unknown"
+    return "unknown"
+
+
+def _extract_user_message(prompt: str) -> str:
+    for line in prompt.splitlines():
+        if line.lower().startswith("user message:"):
+            return line.split(":", 1)[1].strip() or prompt[-80:]
+    return prompt[-80:]

@@ -12,7 +12,7 @@ import type {
   SupportCase,
   ToolCall
 } from "../types/api";
-import { API_BASE, fetchJson } from "../services/apiClient";
+import { API_BASE, authHeaders, fetchJson } from "../services/apiClient";
 import { confirmTask } from "../services/casesApi";
 import { streamChat } from "../services/chatStream";
 
@@ -49,11 +49,16 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
 
   const loadConversation = useCallback(async (
     nextConversationId: string,
-    options?: { preserveRunArtifacts?: boolean }
+    options?: { preserveRunArtifacts?: boolean; userIdOverride?: string }
   ) => {
+    const headers = authHeaders(options?.userIdOverride ?? userId);
     const [snapshot, state] = await Promise.all([
-      fetchJson<ConversationSnapshot>(`${API_BASE}/api/conversations/${nextConversationId}`),
-      fetchJson<StreamState>(`${API_BASE}/api/conversations/${nextConversationId}/stream-state`)
+      fetchJson<ConversationSnapshot>(`${API_BASE}/api/conversations/${nextConversationId}`, {
+        headers
+      }),
+      fetchJson<StreamState>(`${API_BASE}/api/conversations/${nextConversationId}/stream-state`, {
+        headers
+      })
     ]);
     const latestCase = [...(snapshot.cases ?? [])].sort((left, right) =>
       right.updated_at.localeCompare(left.updated_at)
@@ -77,7 +82,7 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
     }
     setCurrentCase(latestCase);
     setCurrentTask(latestTask);
-  }, []);
+  }, [userId]);
 
   const send = useCallback(
     async (message: string) => {
@@ -120,9 +125,18 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
           },
           onFinal: (payload) => {
             setActionPlan(payload.action_plan ?? null);
+            setPendingConfirmation(payload.pending_confirmation ?? null);
             setConversationId(payload.conversation_id);
             window.setTimeout(
-              () => void loadConversation(payload.conversation_id, { preserveRunArtifacts: true }),
+              () => {
+                void loadConversation(payload.conversation_id, { preserveRunArtifacts: true }).catch(
+                  (cause) => {
+                    setError(
+                      cause instanceof Error ? cause.message : "Conversation refresh failed"
+                    );
+                  }
+                );
+              },
               180
             );
           },
@@ -144,16 +158,46 @@ export function useChatStream(userId: string, onAfterMutation?: () => Promise<vo
 
   const approveTask = useCallback(
     async (approved: boolean) => {
-      const taskId = currentTask?.id ?? pendingConfirmation?.task_id;
+      const taskId = pendingConfirmation?.task_id ?? currentTask?.id;
       if (!taskId) return null;
-      const response = await confirmTask(taskId, userId, approved);
-      const nextConversationId = conversationId ?? currentCase?.conversation_id ?? null;
-      await Promise.all([
-        nextConversationId ? loadConversation(nextConversationId) : Promise.resolve(),
-        onAfterMutation?.() ?? Promise.resolve()
-      ]);
-      setPendingConfirmation(null);
-      return response;
+      setError(null);
+      setBusy(true);
+      try {
+        const response = await confirmTask(taskId, userId, approved);
+        const payload = response as {
+          case?: SupportCase | null;
+          task?: CaseTask | null;
+          tool_call?: ToolCall | null;
+        };
+        if (payload.case) setCurrentCase(payload.case);
+        if (payload.task) setCurrentTask(payload.task);
+        const toolCall = payload.tool_call;
+        if (toolCall) {
+          setToolCalls((current) =>
+            current.some(
+              (call) =>
+                call.audit_id &&
+                toolCall.audit_id &&
+                call.audit_id === toolCall.audit_id
+            )
+              ? current
+              : [...current, toolCall]
+          );
+        }
+        setPendingConfirmation(null);
+        const nextConversationId =
+          conversationId ?? payload.case?.conversation_id ?? currentCase?.conversation_id ?? null;
+        await Promise.all([
+          nextConversationId ? loadConversation(nextConversationId) : Promise.resolve(),
+          onAfterMutation?.() ?? Promise.resolve()
+        ]);
+        return response;
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Task confirmation failed");
+        return null;
+      } finally {
+        setBusy(false);
+      }
     },
     [
       conversationId,

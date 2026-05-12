@@ -164,6 +164,23 @@ class EvalHarness:
                 "expected_intent": case.expected_intent,
                 "actual_intent": state.intent,
                 "intent_ok": state.intent == case.expected_intent,
+                "router_source": state.metadata.get("router_source", "rule"),
+                "router_llm_attempted": bool(state.metadata.get("router_llm_attempted", False)),
+                "router_llm_json_parse_success": bool(
+                    state.metadata.get("router_llm_json_parse_success", False)
+                ),
+                "router_fallback_reason": state.metadata.get("router_fallback_reason", ""),
+                "planner_source": state.metadata.get("planner_source", "rule"),
+                "llm_plan_available": bool(state.metadata.get("llm_plan_available", False)),
+                "planner_validation_rejected": bool(
+                    state.metadata.get("planner_validation_rejected", False)
+                ),
+                "planner_validation_rejected_tools": list(
+                    state.metadata.get("planner_validation_rejected_tools", [])
+                ),
+                "unsafe_plan_blocked": bool(state.metadata.get("unsafe_plan_blocked", False)),
+                "kb_query": state.metadata.get("kb_query", state.messages[-1].content),
+                "kb_query_source": state.metadata.get("kb_query_source", "original"),
                 "expected_tools": list(case.expected_tools),
                 "forbidden_tools": list(case.forbidden_tools),
                 "actual_tools": list(tool_names),
@@ -236,8 +253,53 @@ class EvalHarness:
         count = len(rows) or 1
         sorted_latencies = sorted(latencies)
         p95_index = min(len(sorted_latencies) - 1, int(len(sorted_latencies) * 0.95))
+        router_attempts = sum(row["router_llm_attempted"] for row in rows)
+        planner_attempts = sum(row["llm_plan_available"] for row in rows)
+        unsafe_plan_attempts = sum(
+            any(
+                tool in {"create_refund", "create_ticket", "handoff_to_human"}
+                for tool in row["planner_validation_rejected_tools"]
+            )
+            for row in rows
+        )
+        router_source_distribution = {
+            source: sum(1 for row in rows if row["router_source"] == source)
+            for source in sorted({str(row["router_source"]) for row in rows})
+        }
         return {
             "case_count": len(rows),
+            "router_source_distribution": router_source_distribution,
+            "llm_json_parse_success_rate": round(
+                sum(row["router_llm_json_parse_success"] for row in rows)
+                / max(1, router_attempts),
+                4,
+            )
+            if router_attempts
+            else 0,
+            "llm_fallback_rate": round(
+                sum(
+                    row["router_llm_attempted"] and row["router_source"] == "rule"
+                    for row in rows
+                )
+                / max(1, router_attempts),
+                4,
+            )
+            if router_attempts
+            else 0,
+            "planner_validation_reject_rate": round(
+                sum(row["planner_validation_rejected"] for row in rows)
+                / max(1, planner_attempts),
+                4,
+            )
+            if planner_attempts
+            else 0,
+            "unsafe_plan_block_rate": round(
+                sum(row["unsafe_plan_blocked"] for row in rows)
+                / max(1, unsafe_plan_attempts),
+                4,
+            )
+            if unsafe_plan_attempts
+            else 0,
             "intent_accuracy": round(sum(row["intent_ok"] for row in rows) / count, 4),
             "tool_accuracy": round(sum(row["tools_ok"] for row in rows) / count, 4),
             "forbidden_tool_violation_rate": round(
@@ -310,6 +372,11 @@ class EvalHarness:
             "# SmartCS Eval Report",
             "",
             f"- Cases: {metrics['case_count']}",
+            f"- Router source distribution: {metrics['router_source_distribution']}",
+            f"- LLM JSON parse success rate: {metrics['llm_json_parse_success_rate']:.2%}",
+            f"- LLM fallback rate: {metrics['llm_fallback_rate']:.2%}",
+            f"- Planner validation reject rate: {metrics['planner_validation_reject_rate']:.2%}",
+            f"- Unsafe plan block rate: {metrics['unsafe_plan_block_rate']:.2%}",
             f"- Intent accuracy: {metrics['intent_accuracy']:.2%}",
             f"- Tool accuracy: {metrics['tool_accuracy']:.2%}",
             f"- Tool argument accuracy: {metrics['tool_argument_accuracy']:.2%}",

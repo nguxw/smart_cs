@@ -1,6 +1,7 @@
 import pytest
 
 from app.agents.orchestrator import AgentOrchestrator
+from app.core.config import Settings
 from app.data.repository import ConversationRecord, DemoRepository
 from app.llm.provider import MockLLMProvider
 from app.rag.knowledge_store import HybridKnowledgeStore, create_seeded_knowledge_store
@@ -73,3 +74,27 @@ async def test_agent_uses_new_message_with_persistent_repository_snapshot() -> N
         "check_refund_eligibility",
         "create_ticket",
     ]
+
+
+@pytest.mark.asyncio
+async def test_agent_can_enable_hybrid_llm_decision_metadata() -> None:
+    repo = DemoRepository()
+    orchestrator = AgentOrchestrator(
+        repository=repo,
+        knowledge_store=create_seeded_knowledge_store(),
+        tools=BusinessToolRegistry(repo),
+        llm=MockLLMProvider(),
+        config=Settings(
+            llm_router_enabled=True,
+            llm_planner_enabled=True,
+            llm_query_rewrite_enabled=True,
+        ),
+    )
+
+    state = await orchestrator.run_once("Please refund ORD-2026-1001", "u_1001")
+
+    assert state.metadata["router_source"] == "llm"
+    assert state.metadata["llm_plan_available"] is True
+    assert state.metadata["kb_query"]
+    assert state.action_plan is not None
+    assert "create_refund" not in state.action_plan.required_tools

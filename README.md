@@ -99,9 +99,10 @@ The default executor is a live LangGraph `StateGraph`. It runs bounded, rule-fir
 handlers and preserves the existing SSE event contract. The compatibility orchestrator
 remains available for parity tests and rollback.
 
-SmartCS is intentionally rule-first for routing, tool selection, and risk boundaries.
-The LLM is used for final response composition; authorization, side effects,
-confirmation, and release gates stay deterministic and auditable.
+SmartCS uses a hybrid LLM + rule workflow for low-risk understanding tasks. Optional
+LLM router, planner-candidate, and RAG query-rewrite steps can improve language
+generalization, while authorization, side effects, confirmation, and release gates stay
+deterministic and auditable.
 
 Workflow sequence:
 
@@ -259,6 +260,11 @@ Copy `.env.example` to `.env` for machine-local configuration. `.env` is ignored
 | `OPENAI_API_KEY` | empty | Required for OpenAI-compatible providers. |
 | `OPENAI_BASE_URL` / `OPENAI_API_BASE` | `https://api.openai.com/v1` | OpenAI-compatible chat-completions endpoint. |
 | `LLM_TIMEOUT_S` | `8` | Timeout for OpenAI-compatible and Ollama completions before falling back to a deterministic answer. |
+| `LLM_DECISION_TIMEOUT_S` | `3` | Timeout for LLM router, planner-candidate, and query-rewrite decisions before deterministic fallback. |
+| `LLM_ROUTER_ENABLED` | `false` | Enables hybrid LLM intent and slot extraction with rule fallback. |
+| `LLM_PLANNER_ENABLED` | `false` | Enables LLM ActionPlan candidates before deterministic validation. |
+| `LLM_QUERY_REWRITE_ENABLED` | `true` | Enables LLM knowledge-base query rewrite before RAG retrieval. |
+| `LLM_ANSWER_CRITIC_ENABLED` | `false` | Reserved switch for answer critic workflows. |
 | `CORS_ORIGINS` | local Vite origins | Comma-separated browser origins allowed by FastAPI. |
 | `CORS_ALLOW_CREDENTIALS` | `true` | Whether CORS credentialed requests are allowed. Do not combine with `*` origins. |
 | `DEMO_HEADER_AUTH_ENABLED` | `true` in local | Enables `X-SmartCS-*` identity headers for local demos only. |
@@ -401,8 +407,8 @@ the API.
   replace the HMAC token verifier with JWT/OAuth/session authentication from a real IdP.
 - The default mock LLM is deterministic and useful for tests, but it is not a substitute for live-model evaluation.
 - The local deterministic embedding provider is designed for reproducibility, not semantic quality.
-- The agent is rule-first plus LLM-compose; it should not be described as a free-form
-  autonomous planner.
+- The agent is hybrid LLM + deterministic governance; it should not be described as a
+  free-form autonomous planner.
 - Live model providers currently use non-streaming chat completions. Runtime events stream
   immediately, but answer chunks are emitted after composition finishes; use
   `LLM_TIMEOUT_S` to keep local demos responsive.

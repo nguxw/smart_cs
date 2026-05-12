@@ -50,6 +50,15 @@ class Settings:
     )
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     llm_timeout_s: float = float(os.getenv("LLM_TIMEOUT_S", "8"))
+    llm_router_enabled: bool = _truthy(os.getenv("LLM_ROUTER_ENABLED"), default=False)
+    llm_planner_enabled: bool = _truthy(os.getenv("LLM_PLANNER_ENABLED"), default=False)
+    llm_query_rewrite_enabled: bool = _truthy(
+        os.getenv("LLM_QUERY_REWRITE_ENABLED"), default=True
+    )
+    llm_answer_critic_enabled: bool = _truthy(
+        os.getenv("LLM_ANSWER_CRITIC_ENABLED"), default=False
+    )
+    llm_decision_timeout_s: float = float(os.getenv("LLM_DECISION_TIMEOUT_S", "3"))
 
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "local")
     embedding_model: str = os.getenv(

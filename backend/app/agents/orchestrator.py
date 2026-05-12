@@ -7,9 +7,14 @@ from dataclasses import asdict
 from typing import Any
 
 from app.agents.guardrails import check_input_safety, check_output_safety
+from app.agents.llm_planner import build_llm_action_plan
+from app.agents.llm_router import classify_intent_hybrid
+from app.agents.plan_validator import merge_and_validate_action_plan
 from app.agents.planner import build_action_plan
+from app.agents.query_rewriter import rewrite_kb_query
 from app.agents.router import classify_intent, extract_order_id
 from app.auth.context import AuthContext, build_dev_auth_context
+from app.core.config import Settings, settings
 from app.data.repository import DemoRepository
 from app.llm.provider import LLMProvider
 from app.models.schemas import (
@@ -41,12 +46,14 @@ class AgentOrchestrator:
         tools: BusinessToolRegistry,
         llm: LLMProvider,
         tool_runtime: ToolRuntime | None = None,
+        config: Settings | None = None,
     ) -> None:
         self.repository = repository
         self.knowledge_store = knowledge_store
         self.tools = tools
         self.tool_runtime = tool_runtime or ToolRuntime(repository, tools)
         self.llm = llm
+        self.settings = config or settings
         self.case_workflow = CaseWorkflow(repository)
         self.task_workflow = TaskWorkflow(repository)
         self.ticket_workflow = TicketWorkflow(repository)
@@ -347,8 +354,29 @@ class AgentOrchestrator:
 
     async def _router(self, state: AgentState) -> None:
         latest = state.messages[-1].content
+        if self.settings.llm_router_enabled:
+            decision = await classify_intent_hybrid(
+                latest,
+                self.llm,
+                timeout_s=self.settings.llm_decision_timeout_s,
+            )
+            state.intent = decision.intent
+            state.metadata["order_id"] = decision.order_id
+            state.metadata["router_source"] = decision.source
+            state.metadata["router_confidence"] = decision.confidence
+            state.metadata["router_reason"] = decision.reason
+            state.metadata["router_llm_attempted"] = decision.llm_attempted
+            state.metadata["router_llm_json_parse_success"] = decision.llm_json_parse_success
+            state.metadata["router_fallback_reason"] = decision.fallback_reason
+            return
+
         state.intent = classify_intent(latest)
         state.metadata["order_id"] = extract_order_id(latest)
+        state.metadata["router_source"] = "rule"
+        state.metadata["router_confidence"] = 1.0
+        state.metadata["router_reason"] = "llm_router_disabled"
+        state.metadata["router_llm_attempted"] = False
+        state.metadata["router_llm_json_parse_success"] = False
 
     async def _input_policy(self, state: AgentState) -> None:
         result = check_input_safety(state.messages[-1].content)
@@ -360,6 +388,12 @@ class AgentOrchestrator:
     async def _action_planner(self, state: AgentState) -> None:
         latest = state.messages[-1].content
         plan = build_action_plan(latest, state.intent, state.metadata.get("order_id"))
+        state.metadata["planner_source"] = "rule"
+        state.metadata["llm_plan_available"] = False
+        state.metadata["planner_validation_rejected"] = False
+        state.metadata["planner_validation_rejected_tools"] = []
+        state.metadata["planner_validation_adjustments"] = []
+        state.metadata["unsafe_plan_blocked"] = False
         if plan.slots.get("order_reference") == "latest" and not plan.slots.get("order_id"):
             auth = _auth_from_state(state)
             latest_order = self.repository.latest_order_for_user(auth.user_id)
@@ -367,6 +401,31 @@ class AgentOrchestrator:
                 plan.slots["order_id"] = latest_order.id
                 state.metadata["order_id"] = latest_order.id
                 state.metadata["order_id_source"] = "latest_reference"
+        if self.settings.llm_planner_enabled:
+            llm_plan = await build_llm_action_plan(
+                latest,
+                state.intent,
+                state.metadata.get("order_id"),
+                self.llm,
+                timeout_s=self.settings.llm_decision_timeout_s,
+            )
+            validation = merge_and_validate_action_plan(plan, llm_plan)
+            plan = validation.plan
+            state.metadata["planner_source"] = validation.source
+            state.metadata["llm_plan_available"] = validation.llm_plan_available
+            state.metadata["planner_validation_rejected"] = validation.rejected
+            state.metadata["planner_validation_rejected_tools"] = validation.rejected_tools
+            state.metadata["planner_validation_adjustments"] = validation.adjustments
+            state.metadata["unsafe_plan_blocked"] = validation.unsafe_plan_blocked
+            if plan.slots.get("order_id"):
+                state.metadata["order_id"] = plan.slots["order_id"]
+            if plan.slots.get("order_reference") == "latest" and not plan.slots.get("order_id"):
+                auth = _auth_from_state(state)
+                latest_order = self.repository.latest_order_for_user(auth.user_id)
+                if latest_order:
+                    plan.slots["order_id"] = latest_order.id
+                    state.metadata["order_id"] = latest_order.id
+                    state.metadata["order_id_source"] = "latest_reference"
         state.action_plan = plan
         state.metadata["risk_level"] = _max_risk_level(
             str(state.metadata.get("risk_level", "low")),
@@ -409,13 +468,24 @@ class AgentOrchestrator:
             state.retrieved_docs = []
             state.draft_answer = "用户希望结束本次会话。"
             return
-        query = state.messages[-1].content
         category = {
             "refund": "refund",
             "invoice": "invoice",
             "order": "order",
             "ticket": "support",
         }.get(state.intent)
+        original_query = state.messages[-1].content
+        query = original_query
+        state.metadata["kb_query_source"] = "original"
+        if self.settings.llm_query_rewrite_enabled:
+            query = await rewrite_kb_query(
+                original_query,
+                state.intent,
+                self.llm,
+                timeout_s=self.settings.llm_decision_timeout_s,
+            )
+            state.metadata["kb_query_source"] = "llm" if query != original_query else "original"
+        state.metadata["kb_query"] = query
         docs = self.knowledge_store.search(query, top_k=5, category=category)
         fallback_docs = self.knowledge_store.search(query, top_k=5)
         seen = {doc.id for doc in docs}
@@ -750,7 +820,7 @@ class AgentOrchestrator:
     @staticmethod
     def _node_summary(name: str, state: AgentState) -> str:
         if name == "router":
-            return f"intent={state.intent}"
+            return f"intent={state.intent}; source={state.metadata.get('router_source', 'rule')}"
         if name == "input_policy":
             return state.guardrail_result.reason if state.guardrail_result else "not_checked"
         if name == "action_planner" and state.action_plan:
