@@ -44,6 +44,18 @@ async def test_hybrid_router_falls_back_on_invalid_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hybrid_router_keeps_deterministic_closing() -> None:
+    decision = await classify_intent_hybrid(
+        "我没有问题了",
+        StaticLLM('{"intent": "faq", "confidence": 0.99, "order_id": null}'),
+    )
+
+    assert decision.source == "rule"
+    assert decision.intent == "closing"
+    assert decision.llm_attempted is False
+
+
+@pytest.mark.asyncio
 async def test_query_rewriter_returns_short_llm_query() -> None:
     query = await rewrite_kb_query(
         "I do not want this item anymore",
@@ -101,3 +113,5 @@ def test_pii_redaction_and_prompt_injection() -> None:
 
 def test_classify_closing_intent() -> None:
     assert classify_intent("结束吧") == "closing"
+    assert classify_intent("我没有问题了") == "closing"
+    assert classify_intent("没问题了，谢谢") == "closing"

@@ -51,18 +51,33 @@ def _is_closing_request(message: str, text: str) -> bool:
         "不用了",
         "不需要了",
         "没事了",
+        "我没有问题了",
+        "我没问题了",
+        "暂时没有问题了",
+        "暂无问题了",
+        "没有其他问题了",
+        "没有别的问题了",
         "没有问题了",
+        "没其他问题了",
+        "没别的问题了",
         "没问题了",
         "可以了",
         "就这样",
         "先这样",
         "再见",
         "拜拜",
+        "谢谢",
+        "谢谢了",
         "bye",
         "goodbye",
+        "nomorequestions",
+        "thatsall",
+        "thanks",
         "thanksbye",
         "thankyoubye",
     )
     if normalized in closing_phrases:
+        return True
+    if any(phrase in normalized for phrase in closing_phrases if len(phrase) >= 4):
         return True
     return any(phrase in message for phrase in ("结束本次", "到此为止", "无需继续"))

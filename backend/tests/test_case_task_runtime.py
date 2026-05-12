@@ -339,7 +339,7 @@ async def test_customer_closing_conversation_resolves_case_without_handoff() -> 
     )
     repo.update_case(case["id"], {"related_ticket_id": ticket["id"]})
 
-    state = await orchestrator.run_once("结束吧", "u_1005", conversation.id)
+    state = await orchestrator.run_once("我没有问题了", "u_1005", conversation.id)
     closed_case = repo.get_case(case["id"])
     closed_task = repo.get_task(task["id"])
     closed_ticket = repo.tickets[ticket["id"]]

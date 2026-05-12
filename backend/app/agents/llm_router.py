@@ -45,6 +45,14 @@ async def classify_intent_hybrid(
 
     rule_intent = classify_intent(message)
     rule_order_id = extract_order_id(message)
+    if rule_intent == "closing":
+        return _rule_decision(
+            rule_intent,
+            rule_order_id,
+            llm_attempted=False,
+            llm_json_parse_success=False,
+            fallback_reason="deterministic_closing",
+        )
 
     system_prompt = (
         "You are an intent classifier for an ecommerce after-sales support system. "

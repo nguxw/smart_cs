@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from app.agents.router import extract_order_id
-from app.models.schemas import ActionPlan
+from app.models.schemas import ActionPlan, RiskLevel
 
 VALID_TOOLS = {
     "query_order",
@@ -24,7 +24,7 @@ SIDE_EFFECT_TOOLS = {
     "create_ticket",
     "handoff_to_human",
 }
-RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
+RISK_ORDER: dict[RiskLevel, int] = {"low": 0, "medium": 1, "high": 2}
 
 
 @dataclass(frozen=True)
@@ -141,5 +141,5 @@ def _ordered_unique(items: list[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
-def _max_risk_level(left: str, right: str) -> str:
-    return left if RISK_ORDER.get(left, 0) >= RISK_ORDER.get(right, 0) else right
+def _max_risk_level(left: RiskLevel, right: RiskLevel) -> RiskLevel:
+    return left if RISK_ORDER[left] >= RISK_ORDER[right] else right
